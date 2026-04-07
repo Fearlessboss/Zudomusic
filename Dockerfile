@@ -1,44 +1,53 @@
 # ================================================
-# ZUDO X MUSIC BOT - Docker Setup (Node.js)
+# ZUDO X MUSIC BOT - Python Version (Full VC Bot)
+# Pyrogram + PyTgCalls + yt-dlp + Clone Mode
 # ================================================
 
-FROM node:20-alpine
+FROM python:3.11-slim
 
-# System dependencies install (yt-dlp + ffmpeg)
-RUN apk add --no-cache \
+# System dependencies (ffmpeg compulsory hai VC streaming ke liye)
+RUN apt-get update && apt-get install -y \
     ffmpeg \
-    python3 \
-    py3-pip \
-    && pip3 install --no-cache-dir --upgrade yt-dlp
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
 # Working directory
 WORKDIR /app
 
-# Pehle package files copy karo (cache better ke liye)
-COPY package*.json ./
+# Pehle script copy karo (auto pip install ke liye)
+COPY musicbot.py /app/musicbot.py
 
-# Dependencies install (production only)
-RUN npm ci --only=production && npm cache clean --force
+# Data directories create kar do (clones, logs, pids ke liye)
+RUN mkdir -p /app/musicbot_runtime/clones \
+             /app/musicbot_runtime/logs \
+             /app/musicbot_runtime/pids \
+    && chmod -R 777 /app/musicbot_runtime
 
-# Baaki code copy karo
-COPY index.js ./
+# Environment variables (default values script ke hisaab se)
+ENV API_ID=123456
+ENV API_HASH=PASTE_API_HASH_HERE
+ENV MAIN_BOT_TOKEN=PASTE_MAIN_BOT_TOKEN_HERE
+ENV OWNER_ID=123456789
+ENV DEFAULT_ASSISTANT_SESSION=PASTE_DEFAULT_STRING_SESSION_HERE
+ENV MASTER_SUPPORT_CHAT=@userbotsupportchat
+ENV MASTER_OWNER_USERNAME=@ITZ_ME_ADITYA_02
+ENV BOT_BRAND_NAME="AURA X MUSIC"
+ENV BOT_BRAND_TAGLINE="Ultra Fast • No Lag • Voice Chat Player"
 
-# Downloads folder (audio files ke liye)
-RUN mkdir -p downloads && chmod 777 downloads
+# Pehli baar packages install karne ke liye (script khud bhi karega)
+RUN python -m pip install --no-cache-dir --upgrade \
+    pyrogram \
+    tgcrypto \
+    py-tgcalls \
+    yt-dlp \
+    aiohttp
 
-# Environment variables (optional - .env se bhi le sakta hai)
-ENV BOT_TOKEN=""
-ENV OWNER_ID="7661825494"
-ENV BOT_BRAND_NAME="ZUDO X MUSIC"
-ENV BOT_BRAND_TAGLINE="Ultra Fast • No Lag"
-
-# Bot ko non-root user se chalao (security ke liye)
-RUN addgroup -g 1001 botgroup && \
-    adduser -D -u 1001 -G botgroup botuser
+# Non-root user for security
+RUN useradd -m -u 1001 botuser
 USER botuser
 
-# Volume for downloads (optional)
-VOLUME /app/downloads
+# Volume for persistence (clones, logs, pids)
+VOLUME /app/musicbot_runtime
 
 # Bot start
 CMD ["python", "music.py"]
