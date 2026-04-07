@@ -1,6 +1,7 @@
 # ================================================
 # ZUDO X MUSIC BOT - Python Version (Full VC Bot)
 # Pyrogram + PyTgCalls + yt-dlp + Clone Mode
+# Script Name: music.py
 # ================================================
 
 FROM python:3.11-slim
@@ -14,8 +15,8 @@ RUN apt-get update && apt-get install -y \
 # Working directory
 WORKDIR /app
 
-# Pehle script copy karo (auto pip install ke liye)
-COPY musicbot.py /app/musicbot.py
+# Script ko music.py naam se copy karo
+COPY music.py /app/music.py
 
 # Data directories create kar do (clones, logs, pids ke liye)
 RUN mkdir -p /app/musicbot_runtime/clones \
@@ -23,7 +24,7 @@ RUN mkdir -p /app/musicbot_runtime/clones \
              /app/musicbot_runtime/pids \
     && chmod -R 777 /app/musicbot_runtime
 
-# Environment variables (default values script ke hisaab se)
+# Environment variables
 ENV API_ID=123456
 ENV API_HASH=PASTE_API_HASH_HERE
 ENV MAIN_BOT_TOKEN=PASTE_MAIN_BOT_TOKEN_HERE
@@ -34,7 +35,7 @@ ENV MASTER_OWNER_USERNAME=@ITZ_ME_ADITYA_02
 ENV BOT_BRAND_NAME="AURA X MUSIC"
 ENV BOT_BRAND_TAGLINE="Ultra Fast • No Lag • Voice Chat Player"
 
-# Pehli baar packages install karne ke liye (script khud bhi karega)
+# Required packages install (script khud bhi install karega)
 RUN python -m pip install --no-cache-dir --upgrade \
     pyrogram \
     tgcrypto \
@@ -46,8 +47,8 @@ RUN python -m pip install --no-cache-dir --upgrade \
 RUN useradd -m -u 1001 botuser
 USER botuser
 
-# Volume for persistence (clones, logs, pids)
+# Volume for persistence
 VOLUME /app/musicbot_runtime
 
-# Bot start
+# Bot start (music.py se)
 CMD ["python", "music.py"]
