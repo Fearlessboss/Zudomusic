@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir \
         pyrogram>=2.0.106 \
         tgcrypto>=1.2.5 \
-        py-tgcalls>=2.1.0 \
+        py-tgcalls>=2.2.0 \
         yt-dlp>=2025.3.31
 
 CMD ["python", "music.py"]
