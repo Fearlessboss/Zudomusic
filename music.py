@@ -2,16 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-Hardened single-file Telegram Music Bot.
-Only runtime-generated folders are used; no extra source files required.
-
-Main goals:
-- single file bot + clone mode
-- auto-restart supervisor on crash
+Stable single-file Telegram Music Bot
+- Pyrogram compatibility safe
+- No direct GroupcallForbidden dependency
+- Commands preserved
+- Better runtime hardening
 - Docker friendly
-- better error handling
-- only runtime folders are created automatically
-- optional local .env loading
+- Single file only
 
 Required ENV examples:
 API_ID=12345
@@ -51,7 +48,7 @@ import time
 import traceback
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 # =========================================================
@@ -91,7 +88,7 @@ load_local_env()
 REQUIRED_PACKAGES = {
     "pyrogram": "pyrogram>=2.0.106",
     "tgcrypto": "tgcrypto>=1.2.5",
-    "pytgcalls": "py-tgcalls>=2.2.0",   # ← Bas yeh change kar do
+    "pytgcalls": "py-tgcalls>=2.2.0",
     "yt_dlp": "yt-dlp>=2025.3.31",
 }
 
@@ -106,22 +103,53 @@ def _env_bool(name: str, default: bool = False) -> bool:
 def ensure_python_packages() -> None:
     if not _env_bool("AUTO_INSTALL_DEPS", True):
         return
+
     missing = []
     for module_name, pip_name in REQUIRED_PACKAGES.items():
         if importlib.util.find_spec(module_name) is None:
             missing.append(pip_name)
+
     if not missing:
         return
+
     print(f"[BOOT] Installing missing packages: {', '.join(missing)}", flush=True)
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", "-U", *missing])
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "--no-cache-dir", "-U", *missing]
+    )
 
 
 ensure_python_packages()
 
+
+# =========================================================
+# SAFE IMPORTS / COMPAT LAYER
+# =========================================================
 from pyrogram import Client, filters, idle
 from pyrogram.enums import ChatMemberStatus, ParseMode
-from pyrogram.errors import FloodWait, UserAlreadyParticipant
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+
+import pyrogram.errors as pyro_errors
+
+try:
+    from pyrogram.errors import FloodWait, UserAlreadyParticipant, RPCError, Forbidden, BadRequest
+except Exception:  # ultra-safe fallback
+    from pyrogram.errors import FloodWait, UserAlreadyParticipant
+    RPCError = Exception  # type: ignore
+    Forbidden = Exception  # type: ignore
+    BadRequest = Exception  # type: ignore
+
+# IMPORTANT:
+# Some environments / builds do not expose GroupcallForbidden at pyrogram.errors root.
+# We create a safe compatibility alias so any future internal reference won't crash imports.
+if hasattr(pyro_errors, "GroupcallForbidden"):
+    GroupcallForbidden = pyro_errors.GroupcallForbidden
+else:
+    class GroupcallForbidden(Forbidden):  # type: ignore
+        ID = "GROUPCALL_FORBIDDEN"
+        MESSAGE = "The group call has already ended or is not accessible."
+
+    pyro_errors.GroupcallForbidden = GroupcallForbidden  # type: ignore
+
 from pytgcalls import PyTgCalls
 from pytgcalls.types import StreamEnded
 from yt_dlp import YoutubeDL
@@ -152,7 +180,10 @@ NUBCODER_TOKEN = os.getenv("NUBCODER_TOKEN", "")
 BOT_BRAND_NAME = os.getenv("BOT_BRAND_NAME", "ZUDO X MUSIC")
 BOT_BRAND_TAGLINE = os.getenv("BOT_BRAND_TAGLINE", "Ultra Fast • No Lag • Voice Chat Player")
 
-RUNTIME_DIR = Path(os.getenv("RUNTIME_DIR", str(Path(__file__).resolve().parent / "runtime"))).resolve()
+RUNTIME_DIR = Path(
+    os.getenv("RUNTIME_DIR", str(Path(__file__).resolve().parent / "runtime"))
+).resolve()
+
 DATA_DIR = RUNTIME_DIR
 CLONES_DIR = DATA_DIR / "clones"
 LOGS_DIR = DATA_DIR / "logs"
@@ -221,6 +252,25 @@ class ChatState:
 # =========================================================
 URL_RE = re.compile(r"^(https?://|www\.)", re.I)
 TOKEN_RE = re.compile(r"^\d{7,12}:[A-Za-z0-9_-]{20,}$")
+
+VOICE_CHAT_ERROR_MARKERS = {
+    "GROUPCALL_FORBIDDEN",
+    "GROUPCALL_ALREADY_STARTED",
+    "GROUPCALL_NOT_FOUND",
+    "CHAT_ADMIN_REQUIRED",
+    "CHAT_ADMIN_INVITE_REQUIRED",
+    "INVITE_HASH_EXPIRED",
+    "PARTICIPANT_JOIN_MISSING",
+    "PEER_ID_INVALID",
+    "CHAT_WRITE_FORBIDDEN",
+    "CHANNEL_PUBLIC_GROUP_NA",
+    "CHAT_FORBIDDEN",
+    "VOICE CHAT",
+    "VIDEO CHAT",
+    "NO ACTIVE GROUP CALL",
+    "NOT IN CALL",
+    "ALREADY ENDED",
+}
 
 
 def is_url(text: str) -> bool:
@@ -296,6 +346,48 @@ def validate_config(cfg: BotConfig) -> None:
         raise ValueError("Missing required config: " + ", ".join(missing))
 
 
+def exc_text(exc: Exception) -> str:
+    return f"{type(exc).__name__}: {exc}".strip()
+
+
+def is_voice_chat_error(exc: Exception) -> bool:
+    text = exc_text(exc).upper()
+    return any(marker in text for marker in VOICE_CHAT_ERROR_MARKERS)
+
+
+def pretty_voice_chat_error(exc: Exception) -> str:
+    text = exc_text(exc).upper()
+
+    if "GROUPCALL_FORBIDDEN" in text or "ALREADY ENDED" in text:
+        return (
+            "Group voice chat accessible nahi hai ya khatam ho chuki hai.\n"
+            "Voice chat dubara start karo aur phir /play use karo."
+        )
+
+    if "CHAT_ADMIN_REQUIRED" in text or "CHAT_ADMIN_INVITE_REQUIRED" in text:
+        return (
+            "Assistant ya bot ke paas required admin permissions nahi hain.\n"
+            "Bot/assistant ko invite/manage voice chat rights do."
+        )
+
+    if "PARTICIPANT_JOIN_MISSING" in text:
+        return (
+            "Assistant abhi tak voice chat me properly join nahi hua.\n"
+            "Ek baar VC active rakho aur phir command dobara chalao."
+        )
+
+    if "NO ACTIVE GROUP CALL" in text or "GROUPCALL_NOT_FOUND" in text or "VOICE CHAT" in text:
+        return (
+            "Is group me active voice chat nahi mili.\n"
+            "Pehle voice chat/video chat start karo, phir /play use karo."
+        )
+
+    return (
+        "Voice chat playback fail hua, lekin bot chal raha hai.\n"
+        "VC active rakho, permissions check karo, aur dobara try karo."
+    )
+
+
 async def safe_send(message: Message, text: str, **kwargs):
     try:
         return await message.reply_text(text, **kwargs)
@@ -304,6 +396,19 @@ async def safe_send(message: Message, text: str, **kwargs):
         return await message.reply_text(text, **kwargs)
     except Exception:
         log.exception("safe_send failed")
+        return None
+
+
+async def safe_edit(msg: Optional[Message], text: str, **kwargs):
+    if not msg:
+        return None
+    try:
+        return await msg.edit_text(text, **kwargs)
+    except FloodWait as fw:
+        await asyncio.sleep(getattr(fw, "value", 1))
+        return await msg.edit_text(text, **kwargs)
+    except Exception:
+        log.exception("safe_edit failed")
         return None
 
 
@@ -321,24 +426,30 @@ def sync_extract_track(query: str) -> Track:
         "cookiefile": None,
         "source_address": "0.0.0.0",
     }
+
     source = query if is_url(query) else f"ytsearch1:{query}"
+
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(source, download=False)
         if info is None:
             raise ValueError("No result found")
+
         if "entries" in info:
             entries = info.get("entries") or []
             info = next((x for x in entries if x), None)
             if not info:
                 raise ValueError("No playable result found")
+
         stream_url = info.get("url")
         webpage_url = info.get("webpage_url") or info.get("original_url") or query
         title = info.get("title") or "Unknown Title"
         duration = int(info.get("duration") or 0)
         source_name = info.get("extractor_key") or info.get("extractor") or "Media"
         thumb = info.get("thumbnail") or ""
+
         if not stream_url:
             raise ValueError("Playable audio URL not resolved")
+
         return Track(
             title=title,
             stream_url=stream_url,
@@ -358,6 +469,7 @@ class TelegramMusicBot:
         self.config = config
         self.config_path = config_path
         self.is_master = is_master
+
         self.bot = Client(
             name=f"bot_{config.bot_id}",
             api_id=config.api_id,
@@ -367,6 +479,7 @@ class TelegramMusicBot:
             in_memory=False,
             parse_mode=ParseMode.HTML,
         )
+
         self.assistant = Client(
             name=f"assistant_{config.bot_id}",
             api_id=config.api_id,
@@ -377,6 +490,7 @@ class TelegramMusicBot:
             no_updates=True,
             parse_mode=ParseMode.HTML,
         )
+
         self.calls = PyTgCalls(self.assistant)
         self.states: Dict[int, ChatState] = {}
         self.chat_locks: Dict[int, asyncio.Lock] = {}
@@ -451,7 +565,7 @@ class TelegramMusicBot:
             "• Best use in groups / supergroups\n"
             "• Voice chat/video chat active hona chahiye\n"
             "• yt-dlp based search enabled\n"
-            "• Dockerfile ffmpeg ke saath ready hai\n"
+            "• Docker ffmpeg ke saath ready hona chahiye\n"
         )
 
     def commands_text(self) -> str:
@@ -499,19 +613,57 @@ class TelegramMusicBot:
             invite_link = await self.bot.export_chat_invite_link(chat_id)
             try:
                 await self.assistant.join_chat(invite_link)
+                return
             except UserAlreadyParticipant:
                 return
-            except Exception:
+            except Exception as exc:
+                if is_voice_chat_error(exc):
+                    log.warning("Assistant join warning: %s", exc_text(exc))
+                    return
                 log.exception("Assistant join via invite failed")
         except Exception:
             log.exception("Export invite link failed")
 
+    async def _play_via_pytgcalls(self, chat_id: int, stream_url: str) -> None:
+        """
+        Compatibility wrapper for different py-tgcalls builds.
+        """
+        play_attempts: List[Tuple[str, tuple, dict]] = [
+            ("play(chat_id, url)", (chat_id, stream_url), {}),
+            ("play(chat_id, url, stream_type='audio')", (chat_id, stream_url), {"stream_type": "audio"}),
+        ]
+
+        last_error = None
+        for label, args, kwargs in play_attempts:
+            try:
+                await self.calls.play(*args, **kwargs)
+                log.info("Playback started using %s", label)
+                return
+            except TypeError as exc:
+                last_error = exc
+                continue
+            except Exception as exc:
+                last_error = exc
+                raise
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("Unknown playback failure")
+
     async def play_track(self, chat_id: int, track: Track) -> None:
         await self.ensure_assistant_in_chat(chat_id)
+
         try:
-            await self.calls.play(chat_id, track.stream_url)
-        except TypeError:
-            await self.calls.play(chat_id, track.stream_url, stream_type="audio")
+            await self._play_via_pytgcalls(chat_id, track.stream_url)
+        except Exception as exc:
+            if is_voice_chat_error(exc):
+                try:
+                    await self.calls.leave_call(chat_id)
+                except Exception:
+                    pass
+                raise RuntimeError(pretty_voice_chat_error(exc)) from exc
+            raise
+
         state = self.get_state(chat_id)
         state.current = track
         state.paused = False
@@ -536,7 +688,23 @@ class TelegramMusicBot:
                     log.exception("leave_call failed")
                 return
 
-            await self.play_track(chat_id, next_track)
+            try:
+                await self.play_track(chat_id, next_track)
+            except Exception as exc:
+                log.warning("play_next failed for chat %s: %s", chat_id, exc_text(exc))
+                state.current = None
+                state.paused = False
+                state.muted = False
+                if announce_chat:
+                    try:
+                        await self.bot.send_message(
+                            chat_id,
+                            f"<b>❌ Next track play nahi ho saka.</b>\n{escape_html(str(exc))}",
+                        )
+                    except Exception:
+                        pass
+                return
+
             if announce_chat:
                 try:
                     await self.bot.send_message(
@@ -585,11 +753,23 @@ class TelegramMusicBot:
             try:
                 data = query.data or ""
                 if data == "panel_home":
-                    await query.message.edit_text(self.start_text(), reply_markup=self.start_keyboard(), disable_web_page_preview=True)
+                    await query.message.edit_text(
+                        self.start_text(),
+                        reply_markup=self.start_keyboard(),
+                        disable_web_page_preview=True,
+                    )
                 elif data == "panel_help":
-                    await query.message.edit_text(self.help_text(), reply_markup=self.start_keyboard(), disable_web_page_preview=True)
+                    await query.message.edit_text(
+                        self.help_text(),
+                        reply_markup=self.start_keyboard(),
+                        disable_web_page_preview=True,
+                    )
                 elif data == "panel_commands":
-                    await query.message.edit_text(self.commands_text(), reply_markup=self.start_keyboard(), disable_web_page_preview=True)
+                    await query.message.edit_text(
+                        self.commands_text(),
+                        reply_markup=self.start_keyboard(),
+                        disable_web_page_preview=True,
+                    )
                 await query.answer()
             except Exception:
                 log.exception("panel_callbacks failed")
@@ -597,7 +777,7 @@ class TelegramMusicBot:
         @self.bot.on_message(filters.command(["help", "commands"]) & (filters.private | filters.group))
         async def help_handler(_, message: Message):
             try:
-                cmd = (message.command[0].lower() if getattr(message, "command", None) else "help")
+                cmd = message.command[0].lower() if getattr(message, "command", None) else "help"
                 text = self.help_text() if cmd == "help" else self.commands_text()
                 await safe_send(message, text, disable_web_page_preview=True)
             except Exception:
@@ -610,13 +790,14 @@ class TelegramMusicBot:
                 x = await safe_send(message, "<b>🏓 Pinging...</b>")
                 taken = (time.perf_counter() - started) * 1000
                 if x:
-                    await x.edit_text(
+                    await safe_edit(
+                        x,
                         (
                             f"<b>⚡ {escape_html(self.config.brand_name)} is Online</b>\n"
                             f"<b>Latency:</b> <code>{taken:.2f} ms</code>\n"
                             f"<b>Mode:</b> {'Clone' if self.config.clone_mode else 'Master'}\n"
                             f"<b>Bot ID:</b> <code>{escape_html(self.config.bot_id)}</code>"
-                        )
+                        ),
                     )
             except Exception:
                 log.exception("ping_handler failed")
@@ -628,49 +809,57 @@ class TelegramMusicBot:
                 if not query:
                     return await safe_send(message, "<b>❌ Usage:</b> <code>/play song name</code>")
 
-                processing = await safe_send(message, f"<b>🔎 Searching:</b> <code>{escape_html(query)}</code>")
+                processing = await safe_send(
+                    message, f"<b>🔎 Searching:</b> <code>{escape_html(query)}</code>"
+                )
+
                 try:
                     track = await self.resolve_track(query, mention_user(message))
                 except Exception as exc:
-                    if processing:
-                        return await processing.edit_text(f"<b>❌ Failed:</b> <code>{escape_html(str(exc))}</code>")
-                    return
+                    return await safe_edit(
+                        processing,
+                        f"<b>❌ Failed:</b> <code>{escape_html(str(exc))}</code>",
+                    )
 
                 state = self.get_state(message.chat.id)
+
                 async with self.get_lock(message.chat.id):
                     if state.current is None:
                         try:
                             await self.play_track(message.chat.id, track)
                         except Exception as exc:
-                            if processing:
-                                return await processing.edit_text(
-                                    "<b>❌ VC playback failed.</b>\n"
-                                    f"<code>{escape_html(str(exc))}</code>\n\n"
-                                    "<b>Tip:</b> Group voice chat/video chat active hona chahiye aur assistant ko permissions chahiye."
-                                )
-                            return
-                        if processing:
-                            return await processing.edit_text(
-                                (
-                                    f"<b>▶️ Playing Now</b>\n"
-                                    f"<b>Title:</b> <a href=\"{escape_html(track.webpage_url)}\">{escape_html(track.title)}</a>\n"
-                                    f"<b>Duration:</b> {escape_html(track.pretty_duration)}\n"
-                                    f"<b>Source:</b> {escape_html(track.source)}\n"
-                                    f"<b>Requested By:</b> {track.requested_by}"
-                                ),
-                                disable_web_page_preview=True,
+                            friendly = pretty_voice_chat_error(exc) if is_voice_chat_error(exc) else str(exc)
+                            return await safe_edit(
+                                processing,
+                                "<b>❌ VC playback failed.</b>\n"
+                                f"<code>{escape_html(friendly)}</code>\n\n"
+                                "<b>Tip:</b> Voice chat active honi chahiye aur assistant ko permissions chahiye.",
                             )
-                    state.queue.append(track)
-                    if processing:
-                        return await processing.edit_text(
+
+                        return await safe_edit(
+                            processing,
                             (
-                                f"<b>📥 Added To Queue</b>\n"
+                                f"<b>▶️ Playing Now</b>\n"
                                 f"<b>Title:</b> <a href=\"{escape_html(track.webpage_url)}\">{escape_html(track.title)}</a>\n"
                                 f"<b>Duration:</b> {escape_html(track.pretty_duration)}\n"
-                                f"<b>Position:</b> <code>{len(state.queue)}</code>"
+                                f"<b>Source:</b> {escape_html(track.source)}\n"
+                                f"<b>Requested By:</b> {track.requested_by}"
                             ),
                             disable_web_page_preview=True,
                         )
+
+                    state.queue.append(track)
+                    return await safe_edit(
+                        processing,
+                        (
+                            f"<b>📥 Added To Queue</b>\n"
+                            f"<b>Title:</b> <a href=\"{escape_html(track.webpage_url)}\">{escape_html(track.title)}</a>\n"
+                            f"<b>Duration:</b> {escape_html(track.pretty_duration)}\n"
+                            f"<b>Position:</b> <code>{len(state.queue)}</code>"
+                        ),
+                        disable_web_page_preview=True,
+                    )
+
             except Exception:
                 log.exception("play_handler failed")
                 await safe_send(message, "<b>❌ Unexpected error while processing /play.</b>")
@@ -680,76 +869,106 @@ class TelegramMusicBot:
             try:
                 if not await self.is_admin(message.chat.id, getattr(message.from_user, "id", None)):
                     return await safe_send(message, "<b>❌ Sirf admins use kar sakte hain.</b>")
+
                 await self.calls.pause(message.chat.id)
                 self.get_state(message.chat.id).paused = True
                 await safe_send(message, "<b>⏸ Playback paused.</b>")
+
             except Exception as exc:
-                await safe_send(message, f"<b>❌ Pause failed:</b> <code>{escape_html(str(exc))}</code>")
+                if is_voice_chat_error(exc):
+                    await safe_send(message, f"<b>❌ Pause failed:</b>\n<code>{escape_html(pretty_voice_chat_error(exc))}</code>")
+                else:
+                    await safe_send(message, f"<b>❌ Pause failed:</b> <code>{escape_html(str(exc))}</code>")
 
         @self.bot.on_message(filters.command(["resume"]) & filters.group)
         async def resume_handler(_, message: Message):
             try:
                 if not await self.is_admin(message.chat.id, getattr(message.from_user, "id", None)):
                     return await safe_send(message, "<b>❌ Sirf admins use kar sakte hain.</b>")
+
                 await self.calls.resume(message.chat.id)
                 self.get_state(message.chat.id).paused = False
                 await safe_send(message, "<b>▶️ Playback resumed.</b>")
+
             except Exception as exc:
-                await safe_send(message, f"<b>❌ Resume failed:</b> <code>{escape_html(str(exc))}</code>")
+                if is_voice_chat_error(exc):
+                    await safe_send(message, f"<b>❌ Resume failed:</b>\n<code>{escape_html(pretty_voice_chat_error(exc))}</code>")
+                else:
+                    await safe_send(message, f"<b>❌ Resume failed:</b> <code>{escape_html(str(exc))}</code>")
 
         @self.bot.on_message(filters.command(["mute"]) & filters.group)
         async def mute_handler(_, message: Message):
             try:
                 if not await self.is_admin(message.chat.id, getattr(message.from_user, "id", None)):
                     return await safe_send(message, "<b>❌ Sirf admins use kar sakte hain.</b>")
+
                 await self.calls.mute(message.chat.id)
                 self.get_state(message.chat.id).muted = True
                 await safe_send(message, "<b>🔇 VC muted.</b>")
+
             except Exception as exc:
-                await safe_send(message, f"<b>❌ Mute failed:</b> <code>{escape_html(str(exc))}</code>")
+                if is_voice_chat_error(exc):
+                    await safe_send(message, f"<b>❌ Mute failed:</b>\n<code>{escape_html(pretty_voice_chat_error(exc))}</code>")
+                else:
+                    await safe_send(message, f"<b>❌ Mute failed:</b> <code>{escape_html(str(exc))}</code>")
 
         @self.bot.on_message(filters.command(["unmute"]) & filters.group)
         async def unmute_handler(_, message: Message):
             try:
                 if not await self.is_admin(message.chat.id, getattr(message.from_user, "id", None)):
                     return await safe_send(message, "<b>❌ Sirf admins use kar sakte hain.</b>")
+
                 await self.calls.unmute(message.chat.id)
                 self.get_state(message.chat.id).muted = False
                 await safe_send(message, "<b>🔊 VC unmuted.</b>")
+
             except Exception as exc:
-                await safe_send(message, f"<b>❌ Unmute failed:</b> <code>{escape_html(str(exc))}</code>")
+                if is_voice_chat_error(exc):
+                    await safe_send(message, f"<b>❌ Unmute failed:</b>\n<code>{escape_html(pretty_voice_chat_error(exc))}</code>")
+                else:
+                    await safe_send(message, f"<b>❌ Unmute failed:</b> <code>{escape_html(str(exc))}</code>")
 
         @self.bot.on_message(filters.command(["skip", "next"]) & filters.group)
         async def skip_handler(_, message: Message):
             try:
                 if not await self.is_admin(message.chat.id, getattr(message.from_user, "id", None)):
                     return await safe_send(message, "<b>❌ Sirf admins use kar sakte hain.</b>")
+
                 state = self.get_state(message.chat.id)
                 if not state.current and not state.queue:
                     return await safe_send(message, "<b>❌ Queue empty hai.</b>")
+
                 await safe_send(message, "<b>⏭ Skipping current track...</b>")
                 state.current = None
                 state.paused = False
                 await self.play_next(message.chat.id, announce_chat=True, reason="Skipped by admin")
+
             except Exception as exc:
-                await safe_send(message, f"<b>❌ Skip failed:</b> <code>{escape_html(str(exc))}</code>")
+                if is_voice_chat_error(exc):
+                    await safe_send(message, f"<b>❌ Skip failed:</b>\n<code>{escape_html(pretty_voice_chat_error(exc))}</code>")
+                else:
+                    await safe_send(message, f"<b>❌ Skip failed:</b> <code>{escape_html(str(exc))}</code>")
 
         @self.bot.on_message(filters.command(["stop", "end"]) & filters.group)
         async def stop_handler(_, message: Message):
             try:
                 if not await self.is_admin(message.chat.id, getattr(message.from_user, "id", None)):
                     return await safe_send(message, "<b>❌ Sirf admins use kar sakte hain.</b>")
+
                 state = self.get_state(message.chat.id)
                 state.queue.clear()
                 state.current = None
                 state.paused = False
                 state.loop = False
                 state.muted = False
+
                 try:
                     await self.calls.leave_call(message.chat.id)
                 except Exception:
                     log.exception("leave_call failed in stop")
+
                 await safe_send(message, "<b>⏹ Playback ended and queue cleared.</b>")
+
             except Exception as exc:
                 await safe_send(message, f"<b>❌ Stop failed:</b> <code>{escape_html(str(exc))}</code>")
 
@@ -759,21 +978,26 @@ class TelegramMusicBot:
                 state = self.get_state(message.chat.id)
                 if not state.current and not state.queue:
                     return await safe_send(message, "<b>📭 Queue empty hai.</b>")
+
                 lines = ["<b>🎶 Queue Panel</b>"]
+
                 if state.current:
                     lines.append(
-                        f"\n<b>Now:</b> <a href=\"{escape_html(state.current.webpage_url)}\">{escape_html(state.current.title)}</a> "
-                        f"({escape_html(state.current.pretty_duration)})"
+                        f"\n<b>Now:</b> <a href=\"{escape_html(state.current.webpage_url)}\">"
+                        f"{escape_html(state.current.title)}</a> ({escape_html(state.current.pretty_duration)})"
                     )
+
                 if state.queue:
                     lines.append("\n<b>Up Next:</b>")
                     for i, track in enumerate(state.queue[:15], start=1):
                         lines.append(f"{i}. {escape_html(track.title)} — {escape_html(track.pretty_duration)}")
                     if len(state.queue) > 15:
                         lines.append(f"... and {len(state.queue) - 15} more")
+
                 lines.append(f"\n<b>Loop:</b> {'On' if state.loop else 'Off'}")
                 lines.append(f"<b>Paused:</b> {'Yes' if state.paused else 'No'}")
                 await safe_send(message, "\n".join(lines), disable_web_page_preview=True)
+
             except Exception:
                 log.exception("queue_handler failed")
 
@@ -782,15 +1006,19 @@ class TelegramMusicBot:
             try:
                 if not await self.is_admin(message.chat.id, getattr(message.from_user, "id", None)):
                     return await safe_send(message, "<b>❌ Sirf admins use kar sakte hain.</b>")
+
                 arg = command_arg(message).lower()
                 state = self.get_state(message.chat.id)
+
                 if arg in {"on", "yes", "true", "1"}:
                     state.loop = True
                 elif arg in {"off", "no", "false", "0"}:
                     state.loop = False
                 else:
                     state.loop = not state.loop
+
                 await safe_send(message, f"<b>🔁 Loop {'enabled' if state.loop else 'disabled'}.</b>")
+
             except Exception:
                 log.exception("loop_handler failed")
 
@@ -799,11 +1027,14 @@ class TelegramMusicBot:
             try:
                 if not await self.is_admin(message.chat.id, getattr(message.from_user, "id", None)):
                     return await safe_send(message, "<b>❌ Sirf admins use kar sakte hain.</b>")
+
                 state = self.get_state(message.chat.id)
                 if len(state.queue) < 2:
                     return await safe_send(message, "<b>❌ Shuffle ke liye kam se kam 2 tracks chahiye.</b>")
+
                 random.shuffle(state.queue)
                 await safe_send(message, "<b>🔀 Queue shuffled.</b>")
+
             except Exception:
                 log.exception("shuffle_handler failed")
 
@@ -812,10 +1043,12 @@ class TelegramMusicBot:
             try:
                 if not await self.is_admin(message.chat.id, getattr(message.from_user, "id", None)):
                     return await safe_send(message, "<b>❌ Sirf admins use kar sakte hain.</b>")
+
                 state = self.get_state(message.chat.id)
                 count = len(state.queue)
                 state.queue.clear()
                 await safe_send(message, f"<b>🧹 Cleared {count} queued tracks.</b>")
+
             except Exception:
                 log.exception("clearqueue_handler failed")
 
@@ -825,6 +1058,7 @@ class TelegramMusicBot:
                 state = self.get_state(message.chat.id)
                 if not state.current:
                     return await safe_send(message, "<b>❌ Abhi kuch play nahi ho raha.</b>")
+
                 await safe_send(
                     message,
                     (
@@ -839,6 +1073,7 @@ class TelegramMusicBot:
                     ),
                     disable_web_page_preview=True,
                 )
+
             except Exception:
                 log.exception("np_handler failed")
 
@@ -848,6 +1083,7 @@ class TelegramMusicBot:
                 try:
                     if getattr(message.from_user, "id", None) != self.config.owner_id:
                         return await safe_send(message, "<b>❌ Owner only command.</b>")
+
                     self.clone_flow[message.from_user.id] = {"step": "bot_token"}
                     await safe_send(
                         message,
@@ -876,18 +1112,22 @@ class TelegramMusicBot:
                 try:
                     if getattr(message.from_user, "id", None) != self.config.owner_id:
                         return await safe_send(message, "<b>❌ Owner only command.</b>")
+
                     files = sorted(CLONES_DIR.glob("*.json"))
                     if not files:
                         return await safe_send(message, "<b>📭 No clone configs found.</b>")
+
                     lines = ["<b>📦 Saved Clones</b>"]
                     for f in files[:50]:
                         try:
                             cfg = load_config(f)
                             lines.append(
-                                f"• <code>{escape_html(cfg.bot_id)}</code> - {escape_html(cfg.owner_username)} - {escape_html(cfg.support_chat)}"
+                                f"• <code>{escape_html(cfg.bot_id)}</code> - "
+                                f"{escape_html(cfg.owner_username)} - {escape_html(cfg.support_chat)}"
                             )
                         except Exception:
                             lines.append(f"• <code>{escape_html(f.name)}</code>")
+
                     await safe_send(message, "\n".join(lines))
                 except Exception:
                     log.exception("clones_handler failed")
@@ -897,6 +1137,7 @@ class TelegramMusicBot:
                 try:
                     if getattr(message.from_user, "id", None) != self.config.owner_id:
                         return
+
                     state = self.clone_flow.get(message.from_user.id)
                     if not state:
                         return
@@ -912,17 +1153,28 @@ class TelegramMusicBot:
                             return await safe_send(message, "<b>❌ Invalid bot token.</b> Dobara bhejo.")
                         state["bot_token"] = text
                         state["step"] = "support"
-                        return await safe_send(message, "<b>Step 2/4:</b> Support group username ya link bhejo.\nExample: <code>@userbotsupportchat</code>")
+                        return await safe_send(
+                            message,
+                            "<b>Step 2/4:</b> Support group username ya link bhejo.\n"
+                            "Example: <code>@userbotsupportchat</code>",
+                        )
 
                     if step == "support":
                         state["support_chat"] = normalize_support(text)
                         state["step"] = "owner_username"
-                        return await safe_send(message, "<b>Step 3/4:</b> Owner username/link bhejo.\nExample: <code>@ITZ_ME_ADITYA_02</code>")
+                        return await safe_send(
+                            message,
+                            "<b>Step 3/4:</b> Owner username/link bhejo.\n"
+                            "Example: <code>@ITZ_ME_ADITYA_02</code>",
+                        )
 
                     if step == "owner_username":
                         state["owner_username"] = normalize_owner_username(text)
                         state["step"] = "session"
-                        return await safe_send(message, "<b>Step 4/4:</b> Assistant string session bhejo ya <code>/default</code> likho.")
+                        return await safe_send(
+                            message,
+                            "<b>Step 4/4:</b> Assistant string session bhejo ya <code>/default</code> likho.",
+                        )
 
                     if step == "session":
                         session_string = self.config.assistant_session if text.lower() == "/default" else text
@@ -945,6 +1197,7 @@ class TelegramMusicBot:
 
                         cfg_path = CLONES_DIR / f"{clone_cfg.bot_id}.json"
                         save_config(clone_cfg, cfg_path)
+
                         log_path = LOGS_DIR / f"{clone_cfg.bot_id}.log"
                         pid_path = PIDS_DIR / f"{clone_cfg.bot_id}.pid"
 
@@ -956,8 +1209,10 @@ class TelegramMusicBot:
                                 stdin=subprocess.DEVNULL,
                                 start_new_session=True,
                             )
+
                         pid_path.write_text(str(proc.pid), encoding="utf-8")
                         self.clone_flow.pop(message.from_user.id, None)
+
                         return await safe_send(
                             message,
                             (
@@ -968,6 +1223,7 @@ class TelegramMusicBot:
                                 f"<b>PID:</b> <code>{proc.pid}</code>"
                             ),
                         )
+
                 except Exception:
                     log.exception("clone_flow_handler failed")
                     await safe_send(message, "<b>❌ Clone create karte time error aaya.</b>")
@@ -976,6 +1232,7 @@ class TelegramMusicBot:
         if shutil.which("ffmpeg") is None:
             log.warning("ffmpeg not found in PATH. Playback may fail.")
 
+        await self.add_handlers()
         await self.assistant.start()
         await self.bot.start()
         await self.calls.start()
@@ -984,14 +1241,15 @@ class TelegramMusicBot:
         self.bot_username = me.username or ""
         self.bot_name = me.first_name or self.config.brand_name
 
-        await self.add_handlers()
         log.info("RUNNING | %s | @%s | clone=%s", self.bot_name, self.bot_username, self.config.clone_mode)
         await idle()
 
     async def stop(self) -> None:
         if self._stopping:
             return
+
         self._stopping = True
+
         for name, coro in (
             ("calls.stop", self.calls.stop()),
             ("bot.stop", self.bot.stop()),
@@ -1059,6 +1317,7 @@ def _handle_signal(signum, frame):
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
+
     try:
         asyncio.run(supervisor())
     except KeyboardInterrupt:
