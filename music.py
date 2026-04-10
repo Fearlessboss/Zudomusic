@@ -10,7 +10,7 @@
 ║   ╚██████╔╝███████╗██║   ██║  ██║██║  ██║                   ║
 ║    ╚═════╝ ╚══════╝╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝                   ║
 ║                                                              ║
-║        ♫  TELEGRAM MUSIC BOT  —  ULTRA v2  ♫                ║
+║        ♫  TELEGRAM MUSIC BOT  —  ULTRA v3  ♫                ║
 ║        Fast  •  Stable  •  Zero Error  •  Smart             ║
 ╚══════════════════════════════════════════════════════════════╝
 """
@@ -131,12 +131,12 @@ from yt_dlp import YoutubeDL
 #  Handles v1, v2, v3, v4+ of py-tgcalls automatically
 # ─────────────────────────────────────────────────────
 
-_AudioPiped   = None   # pytgcalls v2 style
-_MediaStream  = None   # pytgcalls v3+ style
-_AudioStream  = None   # pytgcalls v3+ alternative
-_MediaType    = None   # for MediaStream media_type kwarg
+_AudioPiped        = None
+_MediaStream       = None
+_AudioStream       = None
+_VideoStream       = None
+_MediaType         = None
 
-# -- Try v3+ MediaStream (preferred)
 try:
     from pytgcalls.types import MediaStream as _MediaStream      # type: ignore
 except ImportError:
@@ -145,7 +145,6 @@ except ImportError:
     except ImportError:
         pass
 
-# -- Try v3+ AudioStream
 try:
     from pytgcalls.types import AudioStream as _AudioStream      # type: ignore
 except ImportError:
@@ -154,13 +153,19 @@ except ImportError:
     except ImportError:
         pass
 
-# -- Try MediaType enum (needed for some MediaStream constructors)
+try:
+    from pytgcalls.types import VideoStream as _VideoStream      # type: ignore
+except ImportError:
+    try:
+        from pytgcalls.types.stream import VideoStream as _VideoStream  # type: ignore
+    except ImportError:
+        pass
+
 try:
     from pytgcalls.types import MediaType as _MediaType          # type: ignore
 except ImportError:
     pass
 
-# -- Try v2 AudioPiped
 try:
     from pytgcalls.types.input_stream import AudioPiped as _AudioPiped  # type: ignore
 except ImportError:
@@ -169,7 +174,6 @@ except ImportError:
     except ImportError:
         pass
 
-# -- Stream end events
 _StreamEndedCompat      = None
 _StreamAudioEndedCompat = None
 
@@ -248,6 +252,7 @@ class Track:
     requested_by: str = "Unknown"
     source: str = "YouTube"
     thumbnail: str = ""
+    is_video: bool = False
 
     @property
     def pretty_duration(self) -> str:
@@ -373,9 +378,14 @@ def pretty_uptime(seconds: int) -> str:
 #  YT-DLP — FAST EXTRACTION
 # ═══════════════════════════════════════════
 
-def sync_extract_track(query: str) -> Track:
+def sync_extract_track(query: str, want_video: bool = False) -> Track:
+    if want_video:
+        fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+    else:
+        fmt = "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best"
+
     ydl_opts = {
-        "format": "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best",
+        "format": fmt,
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
@@ -410,10 +420,11 @@ def sync_extract_track(query: str) -> Track:
         source_name = info.get("extractor_key") or info.get("extractor") or "Media"
         thumb       = info.get("thumbnail") or ""
         if not stream_url:
-            raise ValueError("ᴀᴜᴅɪᴏ ᴜʀʟ ʀᴇsᴏʟᴠᴇ ɴᴀʜɪ ʜᴜᴀ — yt-dlp returned no stream.")
+            raise ValueError("ꜱᴛʀᴇᴀᴍ ᴜʀʟ ʀᴇꜱᴏʟᴠᴇ ɴᴀʜɪ ʜᴜᴀ.")
         return Track(
             title=title, stream_url=stream_url, webpage_url=webpage_url,
-            duration=duration, source=source_name, thumbnail=thumb
+            duration=duration, source=source_name, thumbnail=thumb,
+            is_video=want_video
         )
 
 # ═══════════════════════════════════════════
@@ -499,7 +510,6 @@ class TelegramMusicBot:
 
     def save_settings(self) -> None:
         try:
-            # Write atomically to prevent corruption on crash
             tmp_path = self.settings_path.with_suffix(".tmp")
             tmp_path.write_text(
                 json.dumps(self.settings, indent=2, ensure_ascii=False),
@@ -509,7 +519,6 @@ class TelegramMusicBot:
             log.info("Settings saved: %s", self.settings_path)
         except Exception:
             log.exception("save_settings failed")
-            # Fallback: direct write
             try:
                 self.settings_path.write_text(
                     json.dumps(self.settings, indent=2, ensure_ascii=False),
@@ -555,7 +564,7 @@ class TelegramMusicBot:
         return "https://t.me"
 
     # ─────────────────────────────────────
-    #  UI TEXT  — ULTRA STYLISH
+    #  UI TEXT
     # ─────────────────────────────────────
 
     def start_text(self, user_name: str = "") -> str:
@@ -600,7 +609,7 @@ class TelegramMusicBot:
             f"{box('ꜱᴛᴀʀᴛᴜᴘ ᴘʜᴏᴛᴏ ꜱᴜᴘᴘᴏʀᴛ ᴠɪᴀ /setdp')}\n\n"
             f"{sep()}\n\n"
             f"<b>ɢʀᴏᴜᴘ ꜱᴇᴛᴜᴘ:</b>\n"
-            f"  1️⃣  ʙᴏᴛ + ᴀꜱꜱɪꜱᴛᴀɴᴛ ᴀᴅᴅ ᴋᴀʀᴏ\n"
+            f"  1️⃣  ʙᴏᴛ ᴀᴅᴅ ᴋᴀʀᴏ ɢʀᴏᴜᴘ ᴍᴇ\n"
             f"  2️⃣  ᴠᴏɪᴄᴇ ᴄʜᴀᴛ ꜱᴛᴀʀᴛ ᴋᴀʀᴏ\n"
             f"  3️⃣  <b>/play</b> ꜱᴏɴɢ ɴᴀᴍᴇ ʟɪᴋʜᴏ 🎶"
         )
@@ -620,7 +629,8 @@ class TelegramMusicBot:
         return (
             f"🎵 <b>ᴍᴜꜱɪᴄ ᴄᴏᴍᴍᴀɴᴅꜱ</b>\n"
             f"{sep()}\n\n"
-            f"  /play  <code>sᴏɴɢ ɴᴀᴍᴇ / ᴜʀʟ</code>  →  ᴘʟᴀʏ ᴋᴀʀᴏ\n"
+            f"  /play  <code>sᴏɴɢ ɴᴀᴍᴇ / ᴜʀʟ</code>  →  ᴀᴜᴅɪᴏ ᴘʟᴀʏ\n"
+            f"  /vplay <code>sᴏɴɢ ɴᴀᴍᴇ / ᴜʀʟ</code>  →  ᴠɪᴅᴇᴏ ᴘʟᴀʏ ᴠᴄ ᴘᴇ\n"
             f"  /p     <code>sᴏɴɢ</code>  →  /play ᴋᴀ ꜱʜᴏʀᴛ ꜰᴏʀᴍ\n"
             f"  /pause   →  ᴘᴀᴜꜱᴇ ᴄᴜʀʀᴇɴᴛ ꜱᴏɴɢ\n"
             f"  /resume  →  ʀᴇꜱᴜᴍᴇ ᴘᴀᴜꜱᴇᴅ ꜱᴏɴɢ\n"
@@ -631,7 +641,8 @@ class TelegramMusicBot:
             f"  /queue   →  ǫᴜᴇᴜᴇ ʟɪꜱᴛ ᴅᴇᴋʜᴏ\n"
             f"  /q       →  /queue ᴀʟɪᴀꜱ\n"
             f"  /np      →  ɴᴏᴡ ᴘʟᴀʏɪɴɢ ᴘᴀɴᴇʟ\n"
-            f"  /now     →  /np ᴀʟɪᴀꜱ\n\n"
+            f"  /now     →  /np ᴀʟɪᴀꜱ\n"
+            f"  /refresh →  ɴᴏᴡ ᴘʟᴀʏɪɴɢ ʀᴇꜰʀᴇꜱʜ\n\n"
             f"{sep()}"
         )
 
@@ -657,7 +668,6 @@ class TelegramMusicBot:
             f"🧩 <b>ᴇxᴛʀᴀ ɪɴꜰᴏ</b>\n"
             f"{sep()}\n\n"
             f"{box('ʙᴏᴛ ᴋᴏ ᴀᴅᴍɪɴ ʙᴀɴᴀᴏ ꜱᴍᴏᴏᴛʜ ᴍɢᴍᴛ ᴋᴇ ʟɪᴇ')}\n"
-            f"{box('ᴀꜱꜱɪꜱᴛᴀɴᴛ ɢʀᴏᴜᴘ ᴍᴇ ʜᴏɴᴀ ᴄʜᴀʜɪᴇ')}\n"
             f"{box('/play ꜱᴇ ᴘᴇʜʟᴇ ᴠᴏɪᴄᴇ ᴄʜᴀᴛ ꜱᴛᴀʀᴛ ᴋᴀʀᴏ')}\n"
             f"{box('ᴘʀɪᴠᴀᴛᴇ ɢʀᴏᴜᴘ ᴍᴇ ɪɴᴠɪᴛᴇ ʟɪɴᴋ ᴡᴏʀᴋ ᴋᴀʀᴇ')}\n"
             f"{box('ᴘᴇʀᴍɪꜱꜱɪᴏɴꜱ ꜰɪx ᴋᴀʀɴᴇ ᴋᴇ ʙᴀᴀᴅ /play ʀᴇᴛʀʏ')}\n\n"
@@ -672,7 +682,7 @@ class TelegramMusicBot:
             f"  /setdp    →  ꜱᴛᴀʀᴛᴜᴘ ᴘʜᴏᴛᴏ ꜱᴇᴛ ᴋᴀʀᴏ\n"
             f"  /removedp →  ꜱᴛᴀʀᴛᴜᴘ ᴘʜᴏᴛᴏ ʜᴀᴛᴀᴏ\n"
             f"  /clone    →  ɴᴀʏᴀ ʙᴏᴛ ꜱᴇᴛᴜᴘ ꜰʟᴏᴡ\n"
-            f"  /dclone   →  ᴄʟᴏɴᴇ ʙᴏᴛ ᴋɪʟʟ ᴋᴀʀᴏ\n"
+            f"  /dclone   →  ʙᴏᴛ ꜱᴛᴏᴘ ᴋᴀʀᴏ\n"
             f"  /cancel   →  ꜱᴇᴛᴜᴘ ᴄᴀɴᴄᴇʟ\n"
             f"  /clones   →  ꜱᴀᴠᴇᴅ ʙᴏᴛ ᴄᴏɴꜰɪɢꜱ ʟɪꜱᴛ\n\n"
             f"⚠️ <b>ꜱɪʀꜰ ᴏᴡɴᴇʀ ᴋᴇ ʟɪᴇ.</b>\n"
@@ -680,7 +690,7 @@ class TelegramMusicBot:
         )
 
     # ─────────────────────────────────────
-    #  KEYBOARDS
+    #  KEYBOARDS  (NO refresh button anywhere)
     # ─────────────────────────────────────
 
     def start_keyboard(self) -> InlineKeyboardMarkup:
@@ -723,6 +733,7 @@ class TelegramMusicBot:
         ])
 
     def np_keyboard(self) -> InlineKeyboardMarkup:
+        # NO refresh button — use /refresh command instead
         return InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("⏸ ᴘᴀᴜꜱᴇ",  callback_data="ctl_pause"),
@@ -733,8 +744,7 @@ class TelegramMusicBot:
                 InlineKeyboardButton("⏹ ꜱᴛᴏᴘ",  callback_data="ctl_stop"),
             ],
             [
-                InlineKeyboardButton("📜 ǫᴜᴇᴜᴇ",   callback_data="ctl_queue"),
-                InlineKeyboardButton("🔄 ʀᴇꜰʀᴇꜱʜ", callback_data="ctl_np"),
+                InlineKeyboardButton("📜 ǫᴜᴇᴜᴇ", callback_data="ctl_queue"),
             ],
         ])
 
@@ -803,7 +813,6 @@ class TelegramMusicBot:
         return None
 
     async def try_delete(self, message: Message) -> None:
-        """Silently try to delete a message (e.g. /play command)."""
         try:
             await message.delete()
         except Exception:
@@ -865,33 +874,24 @@ class TelegramMusicBot:
     #  TRACK RESOLUTION
     # ─────────────────────────────────────
 
-    async def resolve_track(self, query: str, requested_by: str) -> Track:
-        track = await asyncio.to_thread(sync_extract_track, query)
+    async def resolve_track(self, query: str, requested_by: str, want_video: bool = False) -> Track:
+        track = await asyncio.to_thread(sync_extract_track, query, want_video)
         track.requested_by = requested_by
         return track
 
     # ─────────────────────────────────────
-    #  PEER CACHE WARMUP — fixes KeyError: ID not found
+    #  PEER CACHE WARMUP
     # ─────────────────────────────────────
 
     async def warm_peer_cache(self, chat_id: int) -> None:
-        """
-        Ensure the assistant's pyrogram SQLite session has the peer cached.
-        Prevents: KeyError: 'ID not found: -100XXXXXXXXX'
-        Strategy:
-          1. Try get_chat via assistant directly (fast path)
-          2. If fails, resolve via public username or invite link using bot,
-             then let assistant resolve it too.
-        """
         try:
             await self.assistant.get_chat(chat_id)
-            return  # already cached
+            return
         except KeyError:
             pass
         except Exception:
             pass
 
-        # Fallback: use bot to get chat info, then feed username to assistant
         try:
             chat = await self.bot.get_chat(chat_id)
             username = getattr(chat, "username", None)
@@ -901,7 +901,6 @@ class TelegramMusicBot:
                     return
                 except Exception:
                     pass
-            # Last resort: resolve using the invite link
             link, _ = await self.build_join_link(chat_id)
             if link:
                 try:
@@ -943,25 +942,29 @@ class TelegramMusicBot:
         return None, "No public username and invite link export failed"
 
     async def ensure_assistant_in_chat(self, chat_id: int) -> Tuple[bool, Optional[str]]:
+        """
+        Instantly ensures assistant is in the group.
+        - If already in: returns immediately (True, None)
+        - If not in: auto-joins using invite link or public username
+        - If bot has no invite rights: returns helpful error
+        """
         member = await self.assistant_member_info(chat_id)
         if member:
             status = getattr(getattr(member, "status", None), "name", "")
             if "BANNED" in status.upper() or "KICKED" in status.upper():
-                aname = escape_html(self.assistant_username or self.assistant_name)
                 return (
                     False,
-                    f"⚠️ ᴀꜱꜱɪꜱᴛᴀɴᴛ <b>ʙᴀɴ</b> ʜᴀɪ ᴛᴇʀᴇ ɢʀᴏᴜᴘ ᴍᴇ!\n\n"
-                    f"👤 ᴀꜱꜱɪꜱᴛᴀɴᴛ: @{aname} | <code>{self.assistant_id}</code>\n\n"
-                    f"ɪꜱᴋᴏ ᴘᴇʜʟᴇ <b>ᴜɴʙᴀɴ</b> ᴋᴀʀᴏ, ᴘʜɪʀ /play ᴄʜᴀʟᴀᴏ."
+                    "⚠️ ᴠᴄ ᴍᴇᴍʙᴇʀ ʙᴀɴ ʜᴀɪ ɢʀᴏᴜᴘ ᴍᴇ!\n\n"
+                    "ᴘᴇʜʟᴇ ᴜɴʙᴀɴ ᴋᴀʀᴏ, ᴘʜɪʀ /play ᴄʜᴀʟᴀᴏ."
                 )
             return True, None
 
+        # Not in group — try to auto join
         link, reason = await self.build_join_link(chat_id)
         if not link:
-            aname = escape_html(self.assistant_username or self.assistant_name)
             return (
                 False,
-                f"⚠️ ᴀꜱꜱɪꜱᴛᴀɴᴛ (@{aname} | <code>{self.assistant_id}</code>) ɢʀᴏᴜᴘ ᴍᴇ ɴᴀʜɪ ʜᴀɪ.\n"
+                f"⚠️ ᴠᴄ ᴍᴇᴍʙᴇʀ ɢʀᴏᴜᴘ ᴍᴇ ɴᴀʜɪ ʜᴀɪ.\n"
                 f"ᴊᴏɪɴ ʟɪɴᴋ ʙʜɪ ɴᴀʜɪ ʙɴᴀ ʀᴀʜᴀ.\n\n"
                 f"ʙᴏᴛ ᴋᴏ ᴀᴅᴍɪɴ ʙᴀɴᴀᴏ ᴀᴜʀ <b>ɪɴᴠɪᴛᴇ ᴜꜱᴇʀꜱ</b> ᴘᴇʀᴍɪꜱꜱɪᴏɴ ᴅᴏ."
                 + (f"\n\n<code>{escape_html(reason or 'unknown')}</code>" if reason else "")
@@ -969,27 +972,22 @@ class TelegramMusicBot:
 
         try:
             await self.assistant.join_chat(link)
-            await asyncio.sleep(1.5)
-            member = await self.assistant_member_info(chat_id)
-            if member:
-                return True, None
-            return False, "ᴀꜱꜱɪꜱᴛᴀɴᴛ ᴊᴏɪɴ ʜᴏ ɢᴀʏᴀ ᴛʜᴀ, ᴘᴇʀ ᴄᴏɴꜰɪʀᴍ ɴᴀʜɪ ʜᴜᴀ. ᴇᴋ ʙᴀᴀʀ /play ʀᴇᴛʀʏ ᴋᴀʀᴏ."
+            # Warm cache immediately after join — no sleep needed
+            await self.warm_peer_cache(chat_id)
+            return True, None
         except UserAlreadyParticipant:
+            await self.warm_peer_cache(chat_id)
             return True, None
         except Exception as exc:
             err = str(exc).upper()
-            aname = escape_html(self.assistant_username or self.assistant_name)
             if "BANNED" in err or "KICKED" in err or "USER_BANNED_IN_CHANNEL" in err:
                 return (
                     False,
-                    f"⚠️ ᴀꜱꜱɪꜱᴛᴀɴᴛ <b>ʙᴀɴ</b> ʜᴀɪ ᴛᴇʀᴇ ɢʀᴏᴜᴘ ᴍᴇ!\n\n"
-                    f"👤 @{aname} | <code>{self.assistant_id}</code>\n\n"
-                    f"ᴘᴇʜʟᴇ ɪꜱᴋᴏ <b>ᴜɴʙᴀɴ</b> ᴋᴀʀᴏ, ᴘʜɪʀ /play ᴄʜᴀʟᴀᴏ."
+                    "⚠️ ᴠᴄ ᴍᴇᴍʙᴇʀ ʙᴀɴ ʜᴀɪ ɢʀᴏᴜᴘ ᴍᴇ!\n\nᴘᴇʜʟᴇ ᴜɴʙᴀɴ ᴋᴀʀᴏ, ᴘʜɪʀ /play ᴄʜᴀʟᴀᴏ."
                 )
             return (
                 False,
-                f"⚠️ ᴀꜱꜱɪꜱᴛᴀɴᴛ (@{aname} | <code>{self.assistant_id}</code>) ᴊᴏɪɴ ɴᴀʜɪ ʜᴏ ᴘᴀᴀʏᴀ.\n"
-                f"ᴄʜᴇᴄᴋ ᴋᴀʀᴏ ᴋɪ ɢʀᴏᴜᴘ ᴀᴄᴄᴇꜱꜱɪʙʟᴇ ʜᴀɪ.\n\n"
+                f"⚠️ ᴠᴄ ᴍᴇᴍʙᴇʀ ᴊᴏɪɴ ɴᴀʜɪ ʜᴏ ᴘᴀᴀʏᴀ.\n\n"
                 f"ʀᴇᴀꜱᴏɴ: <code>{escape_html(str(exc))}</code>"
             )
 
@@ -1008,77 +1006,77 @@ class TelegramMusicBot:
             return "⚠️ ᴠᴏɪᴄᴇ ᴄʜᴀᴛ ᴀᴄᴄᴇꜱꜱɪʙʟᴇ ɴᴀʜɪ ʜᴀɪ.\nᴠᴏɪᴄᴇ ᴄʜᴀᴛ ᴅᴜʙᴀʀᴀ ꜱᴛᴀʀᴛ ᴋᴀʀᴏ ᴀᴜʀ /play ᴄʜᴀʟᴀᴏ."
 
         if not assistant_member:
-            aname = escape_html(self.assistant_username or self.assistant_name)
-            return (
-                f"⚠️ ᴀꜱꜱɪꜱᴛᴀɴᴛ (@{aname} | <code>{self.assistant_id}</code>) ɢʀᴏᴜᴘ ᴍᴇ ɴᴀʜɪ ʜᴀɪ.\n"
-                f"ɪꜱᴇ ᴍᴀɴᴜᴀʟʟʏ ᴀᴅᴅ ᴋᴀʀᴏ, ꜰɪʀ /play ᴄʜᴀʟᴀᴏ."
-            )
+            return "⚠️ ᴠᴄ ᴍᴇᴍʙᴇʀ ɢʀᴏᴜᴘ ᴍᴇ ɴᴀʜɪ ʜᴀɪ.\nᴘʟᴇᴀꜱᴇ /play ᴅᴜʙᴀʀᴀ ᴄʜᴀʟᴀᴏ."
 
         if any(x in text for x in ("BANNED", "KICKED", "USER_BANNED_IN_CHANNEL")):
-            aname = escape_html(self.assistant_username or self.assistant_name)
-            return (
-                f"⚠️ ᴀꜱꜱɪꜱᴛᴀɴᴛ <b>ʙᴀɴ</b> ʜᴀɪ ᴛᴇʀᴇ ɢʀᴏᴜᴘ ᴍᴇ!\n\n"
-                f"👤 @{aname} | <code>{self.assistant_id}</code>\n\n"
-                f"ᴘᴇʜʟᴇ ɪꜱᴋᴏ ᴜɴʙᴀɴ ᴋᴀʀᴏ, ᴘʜɪʀ /play ᴄʜᴀʟᴀᴏ."
-            )
+            return "⚠️ ᴠᴄ ᴍᴇᴍʙᴇʀ <b>ʙᴀɴ</b> ʜᴀɪ ᴛᴇʀᴇ ɢʀᴏᴜᴘ ᴍᴇ!\n\nᴘᴇʜʟᴇ ɪꜱᴋᴏ <b>ᴜɴʙᴀɴ</b> ᴋᴀʀᴏ, ᴘʜɪʀ /play ᴄʜᴀʟᴀᴏ."
 
         if any(x in text for x in ("CHAT_ADMIN_REQUIRED", "YOU MUST BE ADMIN")):
-            return "⚠️ ᴀꜱꜱɪꜱᴛᴀɴᴛ ᴋᴏ ᴠᴄ ᴊᴏɪɴ ᴋᴀʀɴᴇ ᴋᴇ ʟɪᴇ <b>ᴀᴅᴍɪɴ ʀɪɢʜᴛꜱ</b> ᴄʜᴀʜɪᴇ."
+            return "⚠️ ᴠᴄ ᴍᴇᴍʙᴇʀ ᴋᴏ ᴠᴄ ᴊᴏɪɴ ᴋᴀʀɴᴇ ᴋᴇ ʟɪᴇ <b>ᴀᴅᴍɪɴ ʀɪɢʜᴛꜱ</b> ᴄʜᴀʜɪᴇ."
 
         return (
             "⚠️ ᴠᴏɪᴄᴇ ᴄʜᴀᴛ ꜱᴇ ᴊᴜᴅɴᴇ ᴍᴇ ᴅɪᴋᴋᴀᴛ ᴀᴀʏɪ.\n"
-            "ᴄʜᴇᴄᴋ ᴋᴀʀᴏ ᴋɪ ᴠᴏɪᴄᴇ ᴄʜᴀᴛ ᴀᴄᴛɪᴠᴇ ʜᴀɪ ᴀᴜʀ ʙᴏᴛ/ᴀꜱꜱɪꜱᴛᴀɴᴛ ᴋᴇ ᴘᴀꜱ ʀɪɢʜᴛꜱ ʜᴀɪɴ."
+            "ᴄʜᴇᴄᴋ ᴋᴀʀᴏ ᴋɪ ᴠᴏɪᴄᴇ ᴄʜᴀᴛ ᴀᴄᴛɪᴠᴇ ʜᴀɪ ᴀᴜʀ ʙᴏᴛ ᴀᴅᴍɪɴ ʜᴀɪ."
         )
 
     # ─────────────────────────────────────
     #  PYTGCALLS PLAY — UNIVERSAL COMPAT
-    #  Supports pytgcalls v1 / v2 / v3 / v4+
-    #  100% error-free with full fallback chain
     # ─────────────────────────────────────
 
-    def _build_stream_objects(self, stream_url: str) -> list:
-        """Build all possible stream objects for this pytgcalls version."""
+    def _build_stream_objects(self, stream_url: str, is_video: bool = False) -> list:
         objs = []
 
-        # v3+: MediaStream (primary preferred)
-        if _MediaStream is not None:
-            # Try with media_type=AUDIO kwarg
-            if _MediaType is not None:
-                for attr in ("AUDIO", "audio"):
-                    media_type_val = getattr(_MediaType, attr, None)
-                    if media_type_val is not None:
-                        try:
-                            objs.append(_MediaStream(stream_url, media_type=media_type_val))
-                        except Exception:
-                            pass
-                        break
-            # Try plain MediaStream(url)
-            try:
-                objs.append(_MediaStream(stream_url))
-            except Exception:
-                pass
-
-        # v3+: AudioStream
-        if _AudioStream is not None:
-            try:
-                objs.append(_AudioStream(stream_url))
-            except Exception:
-                pass
-
-        # v2: AudioPiped
-        if _AudioPiped is not None:
-            try:
-                objs.append(_AudioPiped(stream_url))
-            except Exception:
-                pass
+        if is_video:
+            # Video stream objects
+            if _VideoStream is not None:
+                try:
+                    objs.append(_VideoStream(stream_url))
+                except Exception:
+                    pass
+            if _MediaStream is not None:
+                if _MediaType is not None:
+                    for attr in ("VIDEO", "video"):
+                        media_type_val = getattr(_MediaType, attr, None)
+                        if media_type_val is not None:
+                            try:
+                                objs.append(_MediaStream(stream_url, media_type=media_type_val))
+                            except Exception:
+                                pass
+                            break
+                try:
+                    objs.append(_MediaStream(stream_url))
+                except Exception:
+                    pass
+        else:
+            # Audio stream objects (preferred)
+            if _MediaStream is not None:
+                if _MediaType is not None:
+                    for attr in ("AUDIO", "audio"):
+                        media_type_val = getattr(_MediaType, attr, None)
+                        if media_type_val is not None:
+                            try:
+                                objs.append(_MediaStream(stream_url, media_type=media_type_val))
+                            except Exception:
+                                pass
+                            break
+                try:
+                    objs.append(_MediaStream(stream_url))
+                except Exception:
+                    pass
+            if _AudioStream is not None:
+                try:
+                    objs.append(_AudioStream(stream_url))
+                except Exception:
+                    pass
+            if _AudioPiped is not None:
+                try:
+                    objs.append(_AudioPiped(stream_url))
+                except Exception:
+                    pass
 
         return objs
 
     async def _call_method(self, method, chat_id: int, stream_obj=None, raw_url: str = "") -> bool:
-        """
-        Call a pytgcalls method safely.
-        Returns True if successful, False to try next combo, raises on VC errors.
-        """
         try:
             if stream_obj is not None:
                 result = method(chat_id, stream_obj)
@@ -1092,14 +1090,8 @@ class TelegramMusicBot:
                 raise
             return False
 
-    async def _play_via_pytgcalls(self, chat_id: int, stream_url: str) -> None:
-        """
-        Universal pytgcalls play dispatcher.
-        Tries every known API signature across all pytgcalls versions.
-        Raises RuntimeError only if ALL attempts fail.
-        Raises voice-chat errors immediately (so caller can handle them).
-        """
-        stream_objects = self._build_stream_objects(stream_url)
+    async def _play_via_pytgcalls(self, chat_id: int, stream_url: str, is_video: bool = False) -> None:
+        stream_objects = self._build_stream_objects(stream_url, is_video=is_video)
         methods_priority = ["play", "join_group_call", "stream"]
         last_exc: Optional[Exception] = None
 
@@ -1107,8 +1099,6 @@ class TelegramMusicBot:
             method = getattr(self.calls, method_name, None)
             if method is None:
                 continue
-
-            # Try each stream object
             for stream_obj in stream_objects:
                 try:
                     ok = await self._call_method(method, chat_id, stream_obj=stream_obj)
@@ -1119,8 +1109,6 @@ class TelegramMusicBot:
                     if is_voice_chat_error(exc):
                         raise
                     last_exc = exc
-
-            # Fallback: pass raw URL string
             try:
                 ok = await self._call_method(method, chat_id, raw_url=stream_url)
                 if ok:
@@ -1132,17 +1120,31 @@ class TelegramMusicBot:
                 last_exc = exc
 
         raise RuntimeError(
-            f"pytgcalls ᴋᴇ ꜱᴀᴀᴛʜ ᴋᴏɪ ᴄᴏᴍᴘᴀᴛɪʙʟᴇ ᴘʟᴀʏ ᴍᴇᴛʜᴏᴅ ɴᴀʜɪ ᴍɪʟᴀ.\n"
+            f"ᴋᴏɪ ᴄᴏᴍᴘᴀᴛɪʙʟᴇ ᴘʟᴀʏ ᴍᴇᴛʜᴏᴅ ɴᴀʜɪ ᴍɪʟᴀ.\n"
             f"ᴄʜᴇᴄᴋ ᴋᴀʀᴏ: py-tgcalls ᴀᴜʀ ffmpeg ɪɴꜱᴛᴀʟ ʜᴇ.\n"
             f"ʟᴀꜱᴛ ᴇʀʀᴏʀ: {escape_html(str(last_exc))}"
         )
 
     async def play_track(self, chat_id: int, track: Track) -> None:
-        # Step 0: Warm peer cache to prevent KeyError: ID not found
-        await self.warm_peer_cache(chat_id)
+        """
+        INSTANT PLAY — pre-joins assistant & warms cache in parallel with NO delay.
+        Flow:
+          1. Parallel: ensure_assistant_in_chat + warm_peer_cache
+          2. Play immediately
+          3. On VC error: already joined, so just diagnose
+        """
+        # Step 1: Parallel join + cache warm — INSTANT, no sleep
+        join_task  = asyncio.ensure_future(self.ensure_assistant_in_chat(chat_id))
+        cache_task = asyncio.ensure_future(self.warm_peer_cache(chat_id))
+        await asyncio.gather(join_task, cache_task, return_exceptions=True)
 
+        join_ok, join_reason = join_task.result() if not join_task.exception() else (False, str(join_task.exception()))
+        if not join_ok:
+            raise RuntimeError(join_reason or "ᴠᴄ ᴍᴇᴍʙᴇʀ ᴊᴏɪɴ ɴᴀʜɪ ʜᴜᴀ.")
+
+        # Step 2: Play
         try:
-            await self._play_via_pytgcalls(chat_id, track.stream_url)
+            await self._play_via_pytgcalls(chat_id, track.stream_url, is_video=track.is_video)
         except Exception as first_exc:
             if not is_voice_chat_error(first_exc):
                 raise RuntimeError(
@@ -1150,20 +1152,9 @@ class TelegramMusicBot:
                     f"ʀᴇᴀꜱᴏɴ: {escape_html(str(first_exc))}"
                 ) from first_exc
 
-            # Voice chat error → ensure assistant in chat, retry once
-            await asyncio.sleep(1.2)
-            ok, reason = await self.ensure_assistant_in_chat(chat_id)
-            if not ok:
-                raise RuntimeError(reason or "ᴀꜱꜱɪꜱᴛᴀɴᴛ ᴊᴏɪɴ ɪꜱꜱᴜᴇ") from first_exc
-
-            # Warm cache again after join
-            await self.warm_peer_cache(chat_id)
-
-            try:
-                await self._play_via_pytgcalls(chat_id, track.stream_url)
-            except Exception as second_exc:
-                friendly = await self.diagnose_voice_issue(chat_id, second_exc)
-                raise RuntimeError(friendly) from second_exc
+            # VC error after join — diagnose properly
+            friendly = await self.diagnose_voice_issue(chat_id, first_exc)
+            raise RuntimeError(friendly) from first_exc
 
         state = self.get_state(chat_id)
         state.current = track
@@ -1232,13 +1223,15 @@ class TelegramMusicBot:
         if not state.current:
             return "❌ ᴀʙʜɪ ᴋᴜᴄʜ ᴘʟᴀʏ ɴᴀʜɪ ʜᴏ ʀᴀʜᴀ."
         t = state.current
+        mode = "📹 ᴠɪᴅᴇᴏ" if t.is_video else "🎵 ᴀᴜᴅɪᴏ"
         return (
             f"🎵 <b>ɴᴏᴡ ᴘʟᴀʏɪɴɢ</b>\n"
             f"{sep()}\n\n"
             f"🏷 <b>ᴛɪᴛʟᴇ</b>   : {escape_html(t.title)}\n"
             f"⏱ <b>ᴅᴜʀᴀᴛɪᴏɴ</b>: {escape_html(t.pretty_duration)}\n"
             f"🌐 <b>ꜱᴏᴜʀᴄᴇ</b>  : {escape_html(t.source)}\n"
-            f"🙋 <b>ʀᴇǫ ʙʏ</b>  : {t.requested_by}\n\n"
+            f"🙋 <b>ʀᴇǫ ʙʏ</b>  : {t.requested_by}\n"
+            f"📺 <b>ᴍᴏᴅᴇ</b>    : {mode}\n\n"
             f"{sep_thin()}\n\n"
             f"🔁 ʟᴏᴏᴘ  : {human_bool(state.loop)}\n"
             f"⏸ ᴘᴀᴜꜱᴇᴅ: {human_bool(state.paused)}\n"
@@ -1330,6 +1323,94 @@ class TelegramMusicBot:
             await self.play_next(chat_id, announce_chat=True, reason="ᴘʀᴇᴠɪᴏᴜꜱ ꜱᴛʀᴇᴀᴍ ᴇɴᴅᴇᴅ")
         except Exception:
             log.exception("on_stream_end failed")
+
+    # ─────────────────────────────────────
+    #  CORE PLAY HANDLER (shared by /play and /vplay)
+    # ─────────────────────────────────────
+
+    async def _handle_play(self, message: Message, query: str, want_video: bool = False) -> None:
+        # Auto-delete the command message silently
+        asyncio.ensure_future(self.try_delete(message))
+
+        if not query:
+            await self.safe_send(
+                message,
+                f"❓ <b>ᴜꜱᴀɢᴇ:</b>\n"
+                f"  /{'vplay' if want_video else 'play'} <code>sᴏɴɢ ɴᴀᴍᴇ</code>\n"
+                f"  /{'vplay' if want_video else 'play'} <code>youtube_url</code>"
+            )
+            return
+
+        processing = await self.safe_send(
+            message,
+            f"🔎 <b>ꜱᴇᴀʀᴄʜɪɴɢ...</b>\n<code>{escape_html(query)}</code>"
+        )
+
+        # Parallel: resolve track + pre-join assistant — BOTH at same time = INSTANT
+        try:
+            track_task = asyncio.ensure_future(
+                self.resolve_track(query, mention_user(message), want_video=want_video)
+            )
+            join_task = asyncio.ensure_future(
+                self.ensure_assistant_in_chat(message.chat.id)
+            )
+            await asyncio.gather(track_task, join_task, return_exceptions=True)
+
+            # Check track resolution
+            if track_task.exception():
+                await self.safe_edit_text(
+                    processing,
+                    f"❌ ꜱᴏɴɢ ɴᴀʜɪ ᴍɪʟᴀ\n\n<code>{escape_html(str(track_task.exception()))}</code>"
+                )
+                return
+            track = track_task.result()
+
+            # Check join result (non-fatal: we'll retry in play_track)
+            join_ok, join_reason = (True, None)
+            if not join_task.exception():
+                join_ok, join_reason = join_task.result()
+
+        except Exception as exc:
+            await self.safe_edit_text(
+                processing,
+                f"❌ ꜱᴇᴀʀᴄʜ ᴇʀʀᴏʀ\n\n<code>{escape_html(str(exc))}</code>"
+            )
+            return
+
+        async with self.get_lock(message.chat.id):
+            state = self.get_state(message.chat.id)
+
+            if state.current:
+                state.queue.append(track)
+                pos = len(state.queue)
+                await self.safe_edit_text(
+                    processing,
+                    f"📥 <b>ǫᴜᴇᴜᴇᴅ ᴀᴛ #{pos}</b>\n\n"
+                    f"🏷 {escape_html(track.title)}\n"
+                    f"⏱ {escape_html(track.pretty_duration)}"
+                )
+                return
+
+            await self.safe_edit_text(
+                processing,
+                f"⚡ ᴄᴏɴɴᴇᴄᴛɪɴɢ...\n🏷 <b>{escape_html(track.title)}</b>"
+            )
+
+            try:
+                # play_track will use already-joined assistant (no re-join needed)
+                await self.play_track(message.chat.id, track)
+            except Exception as exc:
+                await self.safe_edit_text(
+                    processing,
+                    f"❌ <b>ᴘʟᴀʏ ɴᴀʜɪ ʜᴜᴀ</b>\n\n{escape_html(str(exc))}"
+                )
+                return
+
+        try:
+            np_text = self.now_playing_text(self.get_state(message.chat.id))
+            await self.safe_edit_text(processing, np_text, reply_markup=self.np_keyboard())
+        except Exception:
+            pass
 
     # ─────────────────────────────────────
     #  HANDLERS
@@ -1535,15 +1616,13 @@ class TelegramMusicBot:
                 uptime = pretty_uptime(int(time.time() - self.start_time))
                 active_chats = sum(1 for s in self.states.values() if s.current)
                 n = escape_html(self.display_name)
-                asst_tag = f"@{escape_html(self.assistant_username)}" if self.assistant_username else str(self.assistant_id)
                 text = (
                     f"🏓 <b>{n.upper()} ɪꜱ ᴏɴʟɪɴᴇ</b>\n"
                     f"{sep()}\n\n"
                     f"⚡ ʟᴀᴛᴇɴᴄʏ   : <b>{taken:.2f} ᴍꜱ</b>\n"
                     f"⏳ ᴜᴘᴛɪᴍᴇ   : {escape_html(uptime)}\n"
                     f"🎧 ᴀᴄᴛɪᴠᴇ   : {active_chats} ᴄʜᴀᴛꜱ\n"
-                    f"🤖 ʙᴏᴛ ɪᴅ   : <code>{escape_html(self.config.bot_id)}</code>\n"
-                    f"👤 ᴀꜱꜱɪꜱᴛᴀɴᴛ: {asst_tag}\n\n"
+                    f"🤖 ʙᴏᴛ ɪᴅ   : <code>{escape_html(self.config.bot_id)}</code>\n\n"
                     f"{sep()}"
                 )
                 if x:
@@ -1551,74 +1630,33 @@ class TelegramMusicBot:
             except Exception:
                 log.exception("ping_handler failed")
 
-        # ── /play /p  (with auto-delete of command message)
+        # ── /play /p  — AUDIO
         @self.bot.on_message(filters.command(["play", "p"]) & filters.group)
         async def play_handler(_, message: Message):
             try:
-                # Auto-delete the /play command message
-                asyncio.ensure_future(self.try_delete(message))
-
-                query = command_arg(message)
-                if not query:
-                    tmp = await self.safe_send(
-                        message,
-                        f"❓ <b>ᴜꜱᴀɢᴇ:</b>\n"
-                        f"  /play <code>sᴏɴɢ ɴᴀᴍᴇ</code>\n"
-                        f"  /play <code>youtube_url</code>"
-                    )
-                    return
-
-                processing = await self.safe_send(
-                    message,
-                    f"🔎 <b>ꜱᴇᴀʀᴄʜɪɴɢ...</b>\n<code>{escape_html(query)}</code>"
-                )
-
-                try:
-                    track = await self.resolve_track(query, mention_user(message))
-                except Exception as exc:
-                    await self.safe_edit_text(
-                        processing,
-                        f"❌ ꜱᴏɴɢ ɴᴀʜɪ ᴍɪʟᴀ\n\n<code>{escape_html(str(exc))}</code>"
-                    )
-                    return
-
-                async with self.get_lock(message.chat.id):
-                    state = self.get_state(message.chat.id)
-
-                    if state.current:
-                        state.queue.append(track)
-                        pos = len(state.queue)
-                        await self.safe_edit_text(
-                            processing,
-                            f"📥 <b>ǫᴜᴇᴜᴇᴅ ᴀᴛ #{pos}</b>\n\n"
-                            f"🏷 {escape_html(track.title)}\n"
-                            f"⏱ {escape_html(track.pretty_duration)}"
-                        )
-                        return
-
-                    await self.safe_edit_text(
-                        processing,
-                        f"⏳ ᴄᴏɴɴᴇᴄᴛɪɴɢ ᴛᴏ ᴠᴄ...\n🏷 <b>{escape_html(track.title)}</b>"
-                    )
-
-                    try:
-                        await self.play_track(message.chat.id, track)
-                    except Exception as exc:
-                        await self.safe_edit_text(
-                            processing,
-                            f"❌ <b>ᴘʟᴀʏ ɴᴀʜɪ ʜᴜᴀ</b>\n\n{escape_html(str(exc))}"
-                        )
-                        return
-
-                try:
-                    np_text = self.now_playing_text(self.get_state(message.chat.id))
-                    await self.safe_edit_text(processing, np_text, reply_markup=self.np_keyboard())
-                except Exception:
-                    pass
-
+                await self._handle_play(message, command_arg(message), want_video=False)
             except Exception:
                 log.exception("play_handler failed")
                 await self.safe_send(message, "❌ /play ᴍᴇ ᴇʀʀᴏʀ ᴀᴀ ɢᴀʏᴀ.")
+
+        # ── /vplay — VIDEO stream on VC
+        @self.bot.on_message(filters.command(["vplay"]) & filters.group)
+        async def vplay_handler(_, message: Message):
+            try:
+                await self._handle_play(message, command_arg(message), want_video=True)
+            except Exception:
+                log.exception("vplay_handler failed")
+                await self.safe_send(message, "❌ /vplay ᴍᴇ ᴇʀʀᴏʀ ᴀᴀ ɢᴀʏᴀ.")
+
+        # ── /refresh — manually refresh now playing panel
+        @self.bot.on_message(filters.command(["refresh"]) & filters.group)
+        async def refresh_handler(_, message: Message):
+            try:
+                asyncio.ensure_future(self.try_delete(message))
+                state = self.get_state(message.chat.id)
+                await self.safe_send(message, self.now_playing_text(state), reply_markup=self.np_keyboard())
+            except Exception:
+                log.exception("refresh_handler failed")
 
         # ── /pause
         @self.bot.on_message(filters.command(["pause"]) & filters.group)
@@ -1770,7 +1808,7 @@ class TelegramMusicBot:
             except Exception:
                 log.exception("np_handler failed")
 
-        # ── /shelp (owner only, private)
+        # ── /shelp (owner only)
         @self.bot.on_message(filters.command(["shelp"]) & (filters.private | filters.group))
         async def shelp_handler(_, message: Message):
             try:
@@ -1780,7 +1818,7 @@ class TelegramMusicBot:
             except Exception:
                 log.exception("shelp_handler failed")
 
-        # ── /setdp (owner only, private) — robust fix
+        # ── /setdp (owner only, private)
         @self.bot.on_message(filters.command(["setdp"]) & filters.private)
         async def setdp_handler(_, message: Message):
             try:
@@ -1809,7 +1847,7 @@ class TelegramMusicBot:
             except Exception:
                 log.exception("removedp_handler failed")
 
-        # ── Photo upload for /setdp — robust
+        # ── Photo upload for /setdp
         @self.bot.on_message(filters.private & (filters.photo | filters.document))
         async def private_media_handler(_, message: Message):
             try:
@@ -1820,7 +1858,6 @@ class TelegramMusicBot:
 
                 file_id = ""
                 if message.photo:
-                    # message.photo is a single PhotoSize in pyrogram v2+ (largest)
                     photo_obj = message.photo
                     if hasattr(photo_obj, "file_id"):
                         file_id = photo_obj.file_id
@@ -1836,8 +1873,6 @@ class TelegramMusicBot:
 
                 self.settings["start_photo_file_id"] = file_id
                 self.save_settings()
-
-                # Verify settings were saved correctly
                 saved_id = self.settings.get("start_photo_file_id", "")
                 self.pending_start_photo.pop(message.from_user.id, None)
 
@@ -1865,29 +1900,23 @@ class TelegramMusicBot:
             async def clone_handler(_, message: Message):
                 try:
                     if not self.is_config_owner_user(message):
-                        return await self.safe_send(message, "❌ ᴏᴡɴᴇʀ ᴏɴʟʏ ᴄᴏᴍᴍᴀɴᴅ.")
+                        return
                     self.clone_flow[message.from_user.id] = {"step": "bot_token"}
                     await self.safe_send(
                         message,
-                        f"🤖 <b>ɴᴇᴡ ʙᴏᴛ ꜱᴇᴛᴜᴘ ꜱᴛᴀʀᴛᴇᴅ</b>\n"
+                        f"🚀 <b>ɴᴀʏᴀ ʙᴏᴛ ꜱᴇᴛᴜᴘ</b>\n"
                         f"{sep()}\n\n"
-                        f"<b>ꜱᴛᴇᴘ 1/4:</b>\nɴᴀʏᴀ ʙᴏᴛ ᴛᴏᴋᴇɴ ʙʜᴇᴊᴏ.\n\n"
-                        f"ᴇxᴀᴍᴘʟᴇ:\n<code>123456789:ABCDEF...</code>\n\n"
-                        f"ᴄᴀɴᴄᴇʟ ᴋᴇ ʟɪᴇ /cancel"
+                        f"<b>ꜱᴛᴇᴘ 1/4:</b>\nɴᴀʏᴇ ʙᴏᴛ ᴋᴀ ᴛᴏᴋᴇɴ ʙʜᴇᴊᴏ.\n\n"
+                        f"ᴇxᴀᴍᴘʟᴇ:\n<code>123456789:ABCDEFGHIJ...</code>"
                     )
                 except Exception:
                     log.exception("clone_handler failed")
 
             @self.bot.on_message(filters.command(["dclone"]) & filters.private)
             async def dclone_handler(_, message: Message):
-                """
-                /dclone <bot_token>
-                Kills the clone bot process for the given token and removes its config.
-                """
                 try:
                     if not self.is_config_owner_user(message):
-                        return await self.safe_send(message, "❌ ᴏᴡɴᴇʀ ᴏɴʟʏ ᴄᴏᴍᴍᴀɴᴅ.")
-
+                        return
                     token = command_arg(message).strip()
                     if not token:
                         return await self.safe_send(
@@ -1907,7 +1936,6 @@ class TelegramMusicBot:
                     killed = False
                     pid_val = None
 
-                    # Kill the process
                     if pid_file.exists():
                         try:
                             pid_val = int(pid_file.read_text().strip())
@@ -1919,7 +1947,7 @@ class TelegramMusicBot:
                                 except Exception:
                                     pass
                             except ProcessLookupError:
-                                pass  # already dead
+                                pass
                             killed = True
                         except Exception as pe:
                             log.warning("dclone: could not kill pid %s: %s", pid_val, pe)
@@ -1929,7 +1957,6 @@ class TelegramMusicBot:
                             except Exception:
                                 pass
 
-                    # Remove config
                     config_removed = False
                     if config_file.exists():
                         try:
@@ -1947,7 +1974,7 @@ class TelegramMusicBot:
 
                     await self.safe_send(
                         message,
-                        f"✅ <b>ᴄʟᴏɴᴇ ʙᴏᴛ ᴋɪʟʟ ʜᴏ ɢᴀʏᴀ!</b>\n\n"
+                        f"✅ <b>ʙᴏᴛ ꜱᴛᴏᴘ ʜᴏ ɢᴀʏᴀ!</b>\n\n"
                         f"🤖 ʙᴏᴛ ɪᴅ   : <code>{bot_id}</code>\n"
                         f"💀 ᴘʀᴏᴄᴇꜱꜱ  : {'ꜱᴛᴏᴘᴘᴇᴅ ✅' if killed else 'ɴᴏᴛ ꜰᴏᴜɴᴅ ⚠️'}\n"
                         f"📁 ᴄᴏɴꜰɪɢ   : {'ʀᴇᴍᴏᴠᴇᴅ ✅' if config_removed else 'ɴᴏᴛ ꜰᴏᴜɴᴅ ⚠️'}"
@@ -1989,7 +2016,7 @@ class TelegramMusicBot:
                             if pid_f.exists():
                                 try:
                                     pid_v = int(pid_f.read_text().strip())
-                                    os.kill(pid_v, 0)  # check alive
+                                    os.kill(pid_v, 0)
                                     running = True
                                 except Exception:
                                     pass
@@ -2001,7 +2028,7 @@ class TelegramMusicBot:
                             )
                         except Exception:
                             lines.append(f"• {escape_html(f.name)}")
-                    lines.append(f"\n{sep()}\n💡 /dclone &lt;token&gt; ꜱᴇ ᴋɪʟʟ ᴋᴀʀᴏ")
+                    lines.append(f"\n{sep()}\n💡 /dclone &lt;token&gt; ꜱᴇ ꜱᴛᴏᴘ ᴋᴀʀᴏ")
                     await self.safe_send(message, "\n".join(lines))
                 except Exception:
                     log.exception("clones_handler failed")
@@ -2049,7 +2076,7 @@ class TelegramMusicBot:
                         state_flow["step"] = "session"
                         return await self.safe_send(
                             message,
-                            f"<b>ꜱᴛᴇᴘ 4/4:</b>\nᴀꜱꜱɪꜱᴛᴀɴᴛ ꜱᴛʀɪɴɢ ꜱᴇꜱꜱɪᴏɴ ʙʜᴇᴊᴏ.\n"
+                            f"<b>ꜱᴛᴇᴘ 4/4:</b>\nꜱᴇꜱꜱɪᴏɴ ꜱᴛʀɪɴɢ ʙʜᴇᴊᴏ.\n"
                             f"ʏᴀ ꜱᴀᴍᴇ ᴅᴇꜰᴀᴜʟᴛ ᴜꜱᴇ ᴋᴀʀɴᴀ ʜᴀɪ ᴛᴏ <code>/default</code> ʟɪᴋʜᴏ."
                         )
 
@@ -2062,7 +2089,7 @@ class TelegramMusicBot:
                         if len(session_string) < 50:
                             return await self.safe_send(message, "❌ ꜱᴇꜱꜱɪᴏɴ ꜱᴛʀɪɴɢ ʙᴀʜᴜᴛ ᴄʜᴏᴛɪ ʟᴀɢ ʀᴀʜɪ ʜᴀɪ.")
 
-                        await self.safe_send(message, "⏳ ᴀꜱꜱɪꜱᴛᴀɴᴛ ᴠᴇʀɪꜰʏ ᴋᴀʀ ʀᴀʜᴀ ʜᴜɴ...")
+                        await self.safe_send(message, "⏳ ᴠᴇʀɪꜰʏ ᴋᴀʀ ʀᴀʜᴀ ʜᴜɴ...")
                         try:
                             temp_client = Client(
                                 name=f"verify_{int(time.time())}",
@@ -2078,11 +2105,11 @@ class TelegramMusicBot:
                             await temp_client.stop()
                             await self.safe_send(
                                 message,
-                                f"✅ <b>ᴀꜱꜱɪꜱᴛᴀɴᴛ ꜰᴇᴛᴄʜ ʜᴏ ɢᴀʏᴀ!</b>\n\n"
+                                f"✅ <b>ꜱᴇꜱꜱɪᴏɴ ᴠᴇʀɪꜰɪᴇᴅ!</b>\n\n"
                                 f"👤 ɴᴀᴍᴇ    : {escape_html(asst_name)}\n"
                                 f"🔗 ᴜꜱᴇʀɴᴀᴍᴇ: @{escape_html(asst_username)}\n"
                                 f"🆔 ᴜꜱᴇʀɪᴅ  : <code>{asst_id}</code>\n\n"
-                                f"ᴀꜱꜱɪꜱᴛᴀɴᴛ ꜱᴇᴛ ʜᴏ ɢᴀʏᴀ — ɪꜱꜱᴇ ᴀᴘɴᴇ ɢʀᴏᴜᴘ ᴍᴇ ᴀᴅᴅ ᴋᴀʀᴏ."
+                                f"ꜱᴇᴛᴜᴘ ᴄᴏᴍᴘʟᴇᴛᴇ ʜᴏ ɢᴀʏᴀ — ʙᴏᴛ ʟᴀᴜɴᴄʜ ʜᴏ ʀʜᴀ ʜᴀɪ."
                             )
                         except Exception as ve:
                             await self.safe_send(
@@ -2126,7 +2153,7 @@ class TelegramMusicBot:
                                 f"💬 ꜱᴜᴘᴘᴏʀᴛ: {escape_html(clone_cfg.support_chat)}\n"
                                 f"👤 ᴏᴡɴᴇʀ  : {escape_html(clone_cfg.owner_username)}\n"
                                 f"🆔 ᴘɪᴅ    : <code>{proc.pid}</code>\n\n"
-                                f"💡 ᴋɪʟʟ ᴋᴀʀɴᴇ ᴋᴇ ʟɪᴇ:\n"
+                                f"💡 ꜱᴛᴏᴘ ᴋᴀʀɴᴇ ᴋᴇ ʟɪᴇ:\n"
                                 f"<code>/dclone {escape_html(clone_cfg.bot_token)}</code>"
                             )
                         except Exception as pe:
@@ -2134,7 +2161,7 @@ class TelegramMusicBot:
 
                 except Exception:
                     log.exception("clone_flow_handler failed")
-                    await self.safe_send(message, "❌ ɴᴀʏᴀ ʙᴏᴛ ᴄʀᴇᴀᴛᴇ ᴋᴀʀᴛᴇ ᴛɪᴍᴇ ᴇʀʀᴏʀ ᴀᴀʏᴀ.")
+                    await self.safe_send(message, "❌ ꜱᴇᴛᴜᴘ ᴍᴇ ᴇʀʀᴏʀ ᴀᴀʏᴀ.")
 
     # ─────────────────────────────────────
     #  START / STOP
@@ -2146,7 +2173,6 @@ class TelegramMusicBot:
 
         await self.add_handlers()
 
-        # ── Start assistant first
         await self.assistant.start()
         assistant_me = await self.assistant.get_me()
         self.assistant_id       = assistant_me.id
@@ -2157,7 +2183,6 @@ class TelegramMusicBot:
             self.assistant_username, self.assistant_id, self.assistant_name
         )
 
-        # ── Start bot, fetch its real name
         await self.bot.start()
         me = await self.bot.get_me()
         self.bot_username = me.username or ""
@@ -2166,11 +2191,9 @@ class TelegramMusicBot:
         if self.bot_name:
             self.config.brand_name = self.bot_name
 
-        # ── Start PyTgCalls — wrapped to suppress startup peer errors
         try:
             await self.calls.start()
         except KeyError as ke:
-            # Known issue: assistant session doesn't have peer cached from previous session
             log.warning(
                 "PyTgCalls startup: peer cache miss (%s). "
                 "This is harmless — peer will be cached on first /play.",
@@ -2183,9 +2206,8 @@ class TelegramMusicBot:
             )
 
         log.info(
-            "RUNNING | %s | @%s | bot_id=%s | assistant=@%s(%s)",
+            "RUNNING | %s | @%s | bot_id=%s",
             self.bot_name, self.bot_username, self.config.bot_id,
-            self.assistant_username, self.assistant_id,
         )
         await idle()
 
