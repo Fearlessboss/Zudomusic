@@ -248,11 +248,13 @@ def escape_html(text: str) -> str:
 
 def normalize_support(value: str) -> str:
     value = (value or "").strip()
+    matched = False
     for prefix in ("https://t.me/", "http://t.me/", "t.me/"):
         if value.startswith(prefix):
             value = "@" + value.split(prefix, 1)[1].strip("/")
+            matched = True
             break
-    elif value and not value.startswith("@") and USERNAME_RE.fullmatch(value):
+    if not matched and value and not value.startswith("@") and USERNAME_RE.fullmatch(value):
         value = "@" + value
     return value or "@support"
 
