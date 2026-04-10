@@ -1418,7 +1418,7 @@ class TelegramMusicBot:
 
     async def add_handlers(self) -> None:
 
-        # ── Stream end handler (universal)
+        # ── Stream end handler (universal + bulletproof)
         @self.calls.on_update()
         async def stream_updates(_, update):
             try:
@@ -1426,14 +1426,24 @@ class TelegramMusicBot:
                 chat_id = getattr(update, "chat_id", None)
                 if not chat_id:
                     return
+
+                # Detect stream-ended events (all pytgcalls versions)
+                is_ended = False
                 if _StreamEndedCompat is not None and isinstance(update, _StreamEndedCompat):
-                    return await self.on_stream_end(chat_id)
-                if _StreamAudioEndedCompat is not None and isinstance(update, _StreamAudioEndedCompat):
-                    return await self.on_stream_end(chat_id)
-                if "ended" in name:
-                    await self.on_stream_end(chat_id)
+                    is_ended = True
+                elif _StreamAudioEndedCompat is not None and isinstance(update, _StreamAudioEndedCompat):
+                    is_ended = True
+                elif "ended" in name:
+                    is_ended = True
+
+                if is_ended:
+                    # Run on_stream_end in a separate task so ANY error here
+                    # cannot propagate back into pytgcalls' internal loop
+                    asyncio.ensure_future(self.on_stream_end(chat_id))
+
             except Exception:
                 log.exception("stream_updates handler failed")
+                # Never re-raise — must not crash pytgcalls internal loop
 
         # ── /start
         @self.bot.on_message(filters.command(["start"]) & (filters.private | filters.group))
@@ -2167,6 +2177,40 @@ class TelegramMusicBot:
     #  START / STOP
     # ─────────────────────────────────────
 
+    # ─────────────────────────────────────
+    #  PYTGCALLS SAFE START (internal)
+    # ─────────────────────────────────────
+
+    async def _start_pytgcalls(self) -> None:
+        """
+        Start (or restart) only the PyTgCalls layer — never the bot or assistant.
+        Safe to call multiple times: if calls is already running, stop it first.
+        """
+        # Try to stop any existing pytgcalls session cleanly before restarting
+        try:
+            stop_fn = getattr(self.calls, "stop", None)
+            if stop_fn:
+                result = stop_fn()
+                if asyncio.iscoroutine(result):
+                    await result
+        except Exception:
+            pass  # Ignore errors on stop — we're about to restart anyway
+
+        try:
+            await self.calls.start()
+            log.info("PyTgCalls started/restarted successfully.")
+        except KeyError as ke:
+            log.warning(
+                "PyTgCalls startup: peer cache miss (%s). "
+                "This is harmless — peer will be cached on first /play.",
+                ke
+            )
+        except Exception:
+            log.exception(
+                "PyTgCalls start raised an error. "
+                "Will attempt to continue — if play fails, /play will retry."
+            )
+
     async def start(self) -> None:
         if shutil.which("ffmpeg") is None:
             log.warning("ffmpeg not found in PATH. Audio playback may fail.")
@@ -2191,25 +2235,45 @@ class TelegramMusicBot:
         if self.bot_name:
             self.config.brand_name = self.bot_name
 
-        try:
-            await self.calls.start()
-        except KeyError as ke:
-            log.warning(
-                "PyTgCalls startup: peer cache miss (%s). "
-                "This is harmless — peer will be cached on first /play.",
-                ke
-            )
-        except Exception:
-            log.exception(
-                "PyTgCalls start raised an error. "
-                "Will attempt to continue — if play fails, restart the bot."
-            )
+        # Start PyTgCalls via the safe helper
+        await self._start_pytgcalls()
 
         log.info(
             "RUNNING | %s | @%s | bot_id=%s",
             self.bot_name, self.bot_username, self.config.bot_id,
         )
-        await idle()
+
+        # ══════════════════════════════════════════════════════════════
+        #  RESILIENT IDLE LOOP
+        #  Agar PyTgCalls crash kare (e.g. same-GC clone conflict),
+        #  sirf PyTgCalls restart hoga — bot aur assistant KABHI band
+        #  nahi honge. Kitne bhi clone bots kyu na hon, sab active
+        #  rahenge.
+        # ══════════════════════════════════════════════════════════════
+        while not self._stopping:
+            try:
+                await idle()
+                # idle() returned normally → intentional shutdown
+                break
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:
+                if self._stopping:
+                    break
+                log.warning(
+                    "idle() raised unexpectedly: %s  |  "
+                    "Restarting PyTgCalls only — bot stays alive.", exc
+                )
+                # Clear any stale call states so next /play works fresh
+                for chat_id, state in list(self.states.items()):
+                    try:
+                        state.paused = False
+                        state.muted  = False
+                    except Exception:
+                        pass
+                # Restart ONLY pytgcalls — bot + assistant stay connected
+                await asyncio.sleep(1)
+                await self._start_pytgcalls()
 
     async def stop(self) -> None:
         if self._stopping:
@@ -2258,11 +2322,40 @@ async def run_once() -> None:
 
 
 async def supervisor() -> None:
-    restart_delay     = int(os.getenv("CLONE_RESTART_DELAY", "5") or "5")
-    max_restart_delay = int(os.getenv("MAX_RESTART_DELAY",  "60") or "60")
+    # ══════════════════════════════════════════════════════════════════
+    #  SMART SUPERVISOR
+    #
+    #  Clone bots  → restart_delay = 0s, max = 3s  (near-instant)
+    #  Master bot  → restart_delay = 5s, max = 60s (original behaviour)
+    #
+    #  Clone bots check their config file before each restart:
+    #  agar /dclone ne config delete kar diya toh permanently band ho
+    #  jao (intentional stop). Warna HAMESHA restart karo — kabhi band
+    #  mat hone do.
+    # ══════════════════════════════════════════════════════════════════
+    _is_clone = len(sys.argv) > 2 and sys.argv[1] == "--config"
+
+    if _is_clone:
+        restart_delay     = int(os.getenv("CLONE_RESTART_DELAY", "0") or "0")
+        max_restart_delay = int(os.getenv("MAX_RESTART_DELAY",   "3") or "3")
+    else:
+        restart_delay     = int(os.getenv("CLONE_RESTART_DELAY", "5") or "5")
+        max_restart_delay = int(os.getenv("MAX_RESTART_DELAY",  "60") or "60")
+
     attempt = 0
 
     while True:
+        # Clone bot: agar config file delete ho gayi (dclone), permanently stop karo
+        if _is_clone:
+            config_path = Path(sys.argv[2]).resolve()
+            if not config_path.exists():
+                log.info(
+                    "Clone config file missing (%s) — "
+                    "intentional stop via /dclone. Exiting permanently.",
+                    config_path
+                )
+                return
+
         try:
             await run_once()
             log.warning("Bot stopped normally. Restarting in %ss.", restart_delay)
@@ -2273,8 +2366,13 @@ async def supervisor() -> None:
             log.error("Unhandled fatal error on attempt %s: %s", attempt, exc)
             traceback.print_exc()
 
-        await asyncio.sleep(restart_delay)
-        restart_delay = min(max_restart_delay, restart_delay + 5)
+        # Clone bots restart instantly; master bot uses increasing backoff
+        if restart_delay > 0:
+            await asyncio.sleep(restart_delay)
+        if _is_clone:
+            restart_delay = min(max_restart_delay, restart_delay + 1)
+        else:
+            restart_delay = min(max_restart_delay, restart_delay + 5)
 
 
 def _handle_signal(signum, frame):
