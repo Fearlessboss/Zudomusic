@@ -213,23 +213,40 @@ log = logging.getLogger("musicbot")
 # ═══════════════════════════════════════════
 #  CONFIG
 # ═══════════════════════════════════════════
+# ====================== CONFIG ======================
+import os
+from pathlib import Path
 
-API_ID                    = int(os.getenv("API_ID", "0") or "0")
-API_HASH                  = os.getenv("API_HASH", "")
-MAIN_BOT_TOKEN            = os.getenv("MAIN_BOT_TOKEN", "")
-OWNER_ID                  = int(os.getenv("OWNER_ID", "0") or "0")
-DEFAULT_ASSISTANT_SESSION = os.getenv("DEFAULT_ASSISTANT_SESSION", "")
-MASTER_SUPPORT_CHAT       = os.getenv("MASTER_SUPPORT_CHAT", "@support")
-MASTER_OWNER_USERNAME     = os.getenv("MASTER_OWNER_USERNAME", "@owner")
-BOT_BRAND_TAGLINE         = os.getenv("BOT_BRAND_TAGLINE", "𝗙𝗮𝘀𝘁 • 𝗦𝘁𝗮𝗯𝗹𝗲 • 𝗦𝗺𝗼𝗼𝘁𝗵 𝗩𝗖 𝗣𝗹𝗮𝘆𝗲𝗿")
-NUBCODER_TOKEN            = os.getenv("NUBCODER_TOKEN", "")
+# ── Environment Variables ──
+API_ID                    = int(os.getenv("API_ID", "33628258") or "33628258")
+API_HASH                  = os.getenv("API_HASH", "0850762925b9c1715b9b122f7b753128")
+MAIN_BOT_TOKEN            = os.getenv("MAIN_BOT_TOKEN", "8727045177:AAHqYfLpR3GVee-YeoQ6fgk9v8-Wm6y0Nn8")
+OWNER_ID                  = int(os.getenv("OWNER_ID", "7661825494") or "7661825494")
+DEFAULT_ASSISTANT_SESSION = os.getenv("DEFAULT_ASSISTANT_SESSION", "BAIBIGIAq8OQHIQxDFA3LDgskQKAp3979G2EilIaWsBGu6yahWNA9tn_L4eB6UaNsp3ivZ0fx8KIE61qC0mfusNFHDi5N2JZPV0AwtSHxlCeMI4OI8aQ7vyq10HJhDzt_KtHXhrBrgNeorlRfoZRRtl7JSN31X6h84tDANtWrA5YteeuWKRaPTwiggRw86IkyV72DrVPnzFnAeb7xpzy9L7JE9Bw_l0Cddo3cZpDQbfY6QyPLICEsYPPFIC4-IULcUISDSpOvT32LBHj9LFWCy9VUcCi2H_YMGKL508pT2uwo9wSFuwE33MP1571DbhniOtYveG207Ir3TixGl0cGTpQaIkIswAAAAG1wb5UAA")
+MASTER_SUPPORT_CHAT       = os.getenv("MASTER_SUPPORT_CHAT", "@userbotsupportchat")
+MASTER_OWNER_USERNAME     = os.getenv("MASTER_OWNER_USERNAME", "@ITZ_ME_ADITYA_02")
+BOT_BRAND_NAME            = os.getenv("BOT_BRAND_NAME", "ZUDO X MUSIC")
+BOT_BRAND_TAGLINE         = os.getenv("BOT_BRAND_TAGLINE", "Ultra Fast • No Lag • Voice Chat Player")
+NUBCODER_TOKEN            = os.getenv("NUBCODER_TOKEN", "4HBcMS072p")
+AUTO_INSTALL_DEPS         = os.getenv("AUTO_INSTALL_DEPS", "false")
+RUNTIME_DIR               = os.getenv("RUNTIME_DIR", "/tmp/runtime")          # ← YE LINE CHANGE KI HAI
+CLONE_RESTART_DELAY       = int(os.getenv("CLONE_RESTART_DELAY", "5") or "5")
+MAX_RESTART_DELAY         = int(os.getenv("MAX_RESTART_DELAY", "60") or "60")
+LOG_LEVEL                 = os.getenv("LOG_LEVEL", "INFO")
 
-ROOT_RUNTIME_DIR = Path(os.getenv("RUNTIME_DIR", str(Path(__file__).resolve().parent / "runtime"))).resolve()
+# ── ROOT RUNTIME DIRECTORY + FOLDERS ──
+ROOT_RUNTIME_DIR = Path(RUNTIME_DIR).resolve()
 ROOT_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-CLONES_DIR  = ROOT_RUNTIME_DIR / "clones";  CLONES_DIR.mkdir(parents=True, exist_ok=True)
-LOGS_DIR    = ROOT_RUNTIME_DIR / "logs";    LOGS_DIR.mkdir(parents=True, exist_ok=True)
-PIDS_DIR    = ROOT_RUNTIME_DIR / "pids";    PIDS_DIR.mkdir(parents=True, exist_ok=True)
-STATES_DIR  = ROOT_RUNTIME_DIR / "states";  STATES_DIR.mkdir(parents=True, exist_ok=True)
+
+CLONES_DIR  = ROOT_RUNTIME_DIR / "clones"
+LOGS_DIR    = ROOT_RUNTIME_DIR / "logs"
+PIDS_DIR    = ROOT_RUNTIME_DIR / "pids"
+STATES_DIR  = ROOT_RUNTIME_DIR / "states"
+
+CLONES_DIR.mkdir(parents=True, exist_ok=True)
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+PIDS_DIR.mkdir(parents=True, exist_ok=True)
+STATES_DIR.mkdir(parents=True, exist_ok=True)
 
 # ═══════════════════════════════════════════
 #  TRACK CACHE — same song = instant replay
