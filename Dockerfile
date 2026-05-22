@@ -45,5 +45,3 @@ RUN mkdir -p /app/runtime/clones /app/runtime/logs /app/runtime/pids /app/runtim
 Run as exec form so SIGTERM reaches the Python process directly
 
 CMD ["python", "-u", "music.py"]
-
-Ye new do
