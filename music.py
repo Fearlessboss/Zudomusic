@@ -5,7 +5,7 @@ import aiofiles
 import traceback
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageEnhance
-from py_yt import VideosSearch
+from youtubesearchpython import VideosSearch
 from ShrutiMusic import app
 import math
 
